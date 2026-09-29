@@ -41,6 +41,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: .
+          tauriScript: npm run
           tagName: ${{ github.ref_name }}
           releaseName: Rundi ${{ github.ref_name }}
           releaseBody: |
