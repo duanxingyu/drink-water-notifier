@@ -8,3 +8,7 @@
 *.tsbuildinfo
 .idea
 .vscode
+*.key
+*.key.pub
+.env
+.env.*

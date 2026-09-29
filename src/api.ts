@@ -1,5 +1,10 @@
 export type DrinkUnit = "cup" | "ml" | "sip";
 
+export type UpdateInfo = {
+  version: string;
+  body: string | null;
+};
+
 export type Snapshot = {
   workdays: string[];
   start: string;
@@ -20,6 +25,8 @@ export type Snapshot = {
   pausedUntil: string | null;
   configPath: string;
   configWarning: string | null;
+  appVersion: string;
+  updateAvailable: UpdateInfo | null;
 };
 
 export type ReminderPayload = {
@@ -92,6 +99,8 @@ const preview: Snapshot = {
   pausedUntil: null,
   configPath: "预览模式 · 尚未写入系统配置目录",
   configWarning: null,
+  appVersion: "0.1.0",
+  updateAvailable: null,
 };
 
 let memory = structuredClone(preview);
@@ -195,6 +204,16 @@ export async function resume(): Promise<Snapshot> {
 export async function remindNow(): Promise<Snapshot> {
   if (!isTauri()) return structuredClone(memory);
   return invoke<Snapshot>("remind_now");
+}
+
+export async function checkForUpdate(): Promise<UpdateInfo | null> {
+  if (!isTauri()) return null;
+  return invoke<UpdateInfo | null>("check_for_update");
+}
+
+export async function installUpdate(): Promise<void> {
+  if (!isTauri()) return;
+  await invoke<void>("install_update");
 }
 
 export async function onSnapshot(cb: (snap: Snapshot) => void): Promise<() => void> {

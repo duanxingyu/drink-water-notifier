@@ -21,6 +21,7 @@ use tauri::{
     AppHandle, Emitter, Manager, RunEvent, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
 };
 use tauri_plugin_autostart::ManagerExt;
+use tauri_plugin_updater::UpdaterExt;
 
 #[cfg(target_os = "macos")]
 const TRAY_ICON: &[u8] = include_bytes!("../icons/trayTemplate.png");
@@ -38,6 +39,7 @@ struct Inner {
     active: Option<ReminderPayload>,
     token: u64,
     shutdown: bool,
+    update_available: Option<UpdateInfo>,
 }
 
 struct InnerSync {
@@ -109,6 +111,15 @@ struct Snapshot {
     paused_until: Option<String>,
     config_path: String,
     config_warning: Option<String>,
+    app_version: String,
+    update_available: Option<UpdateInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateInfo {
+    version: String,
+    body: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -164,6 +175,8 @@ fn snapshot_from(guard: &Inner) -> Snapshot {
         paused_until: paused_until.map(|time| time.to_rfc3339()),
         config_path: guard.config_path.display().to_string(),
         config_warning: guard.config_warning.clone(),
+        app_version: env!("CARGO_PKG_VERSION").to_string(),
+        update_available: guard.update_available.clone(),
     }
 }
 
@@ -207,6 +220,7 @@ fn load_inner() -> (Inner, bool) {
             active: None,
             token: 0,
             shutdown: false,
+            update_available: None,
         },
         first_launch,
     )
@@ -292,25 +306,93 @@ fn build_menu(app: &AppHandle, state: &AppState) -> tauri::Result<Menu<tauri::Wr
     )?;
     let settings = MenuItem::with_id(app, "settings", "打开设置", true, None::<&str>)?;
     let now = MenuItem::with_id(app, "now", "立即提醒", true, None::<&str>)?;
+    let check_update = MenuItem::with_id(app, "check-update", "检查更新", true, None::<&str>)?;
     let sep_a = PredefinedMenuItem::separator(app)?;
     let sep_b = PredefinedMenuItem::separator(app)?;
+    let sep_c = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+
+    let update_item = snap.update_available.as_ref().map(|info| {
+        MenuItem::with_id(
+            app,
+            "install-update",
+            format!("更新到 {}", info.version),
+            true,
+            None::<&str>,
+        )
+    });
 
     if snap.paused {
         let resume = MenuItem::with_id(app, "resume", "继续提醒", true, None::<&str>)?;
-        Menu::with_items(
-            app,
-            &[&count, &sep_a, &settings, &now, &resume, &sep_b, &quit],
-        )
+        if let Some(Ok(update)) = update_item {
+            Menu::with_items(
+                app,
+                &[
+                    &count,
+                    &sep_a,
+                    &settings,
+                    &now,
+                    &resume,
+                    &sep_b,
+                    &update,
+                    &check_update,
+                    &sep_c,
+                    &quit,
+                ],
+            )
+        } else {
+            Menu::with_items(
+                app,
+                &[
+                    &count,
+                    &sep_a,
+                    &settings,
+                    &now,
+                    &resume,
+                    &sep_b,
+                    &check_update,
+                    &sep_c,
+                    &quit,
+                ],
+            )
+        }
     } else {
         let hour = MenuItem::with_id(app, "pause-hour", "暂停 1 小时", true, None::<&str>)?;
         let today = MenuItem::with_id(app, "pause-today", "今日暂停", true, None::<&str>)?;
-        Menu::with_items(
-            app,
-            &[
-                &count, &sep_a, &settings, &now, &hour, &today, &sep_b, &quit,
-            ],
-        )
+        if let Some(Ok(update)) = update_item {
+            Menu::with_items(
+                app,
+                &[
+                    &count,
+                    &sep_a,
+                    &settings,
+                    &now,
+                    &hour,
+                    &today,
+                    &sep_b,
+                    &update,
+                    &check_update,
+                    &sep_c,
+                    &quit,
+                ],
+            )
+        } else {
+            Menu::with_items(
+                app,
+                &[
+                    &count,
+                    &sep_a,
+                    &settings,
+                    &now,
+                    &hour,
+                    &today,
+                    &sep_b,
+                    &check_update,
+                    &sep_c,
+                    &quit,
+                ],
+            )
+        }
     }
 }
 
@@ -341,6 +423,32 @@ fn on_menu(app: &AppHandle, event: MenuEvent) {
         "pause-hour" => pause_for(&state, 60),
         "pause-today" => pause_for_today(&state),
         "resume" => resume_pause(&state),
+        "check-update" => {
+            let handle = app.clone();
+            tauri::async_runtime::spawn(async move {
+                match run_check_update(&handle).await {
+                    Ok(Some(info)) => {
+                        show_settings(&handle);
+                        eprintln!("润滴：发现新版本 {}", info.version);
+                    }
+                    Ok(None) => {
+                        show_settings(&handle);
+                        eprintln!("润滴：已是最新版本");
+                    }
+                    Err(err) => eprintln!("润滴：检查更新失败：{err}"),
+                }
+            });
+            Ok(())
+        }
+        "install-update" => {
+            let handle = app.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(err) = run_install_update(&handle).await {
+                    eprintln!("润滴：安装更新失败：{err}");
+                }
+            });
+            Ok(())
+        }
         "quit" => {
             state.shutdown();
             app.exit(0);
@@ -670,6 +778,55 @@ fn remind_now(app: AppHandle, state: State<AppState>) -> Result<Snapshot, String
     Ok(state.snapshot())
 }
 
+async fn run_check_update(app: &AppHandle) -> Result<Option<UpdateInfo>, String> {
+    let updater = app.updater().map_err(|err| err.to_string())?;
+    match updater.check().await {
+        Ok(Some(update)) => {
+            let info = UpdateInfo {
+                version: update.version.clone(),
+                body: update.body.clone(),
+            };
+            if let Some(state) = app.try_state::<AppState>() {
+                state.lock().update_available = Some(info.clone());
+                publish(app, &state);
+            }
+            Ok(Some(info))
+        }
+        Ok(None) => {
+            if let Some(state) = app.try_state::<AppState>() {
+                state.lock().update_available = None;
+                publish(app, &state);
+            }
+            Ok(None)
+        }
+        Err(err) => Err(err.to_string()),
+    }
+}
+
+async fn run_install_update(app: &AppHandle) -> Result<(), String> {
+    let updater = app.updater().map_err(|err| err.to_string())?;
+    let update = updater
+        .check()
+        .await
+        .map_err(|err| err.to_string())?
+        .ok_or_else(|| "没有可用更新".to_string())?;
+    update
+        .download_and_install(|_chunk, _total| {}, || {})
+        .await
+        .map_err(|err| err.to_string())?;
+    app.restart();
+}
+
+#[tauri::command]
+async fn check_for_update(app: AppHandle) -> Result<Option<UpdateInfo>, String> {
+    run_check_update(&app).await
+}
+
+#[tauri::command]
+async fn install_update(app: AppHandle) -> Result<(), String> {
+    run_install_update(&app).await
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(
@@ -680,6 +837,8 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_settings(app);
         }))
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let (inner, first_launch) = load_inner();
             let state = AppState {
@@ -706,6 +865,25 @@ pub fn run() {
                 .name("rundi-scheduler".into())
                 .spawn(move || scheduler_loop(handle, shared))
                 .map_err(|err| -> Box<dyn std::error::Error> { Box::new(err) })?;
+
+            let update_handle = app.handle().clone();
+            std::thread::Builder::new()
+                .name("rundi-update-check".into())
+                .spawn(move || {
+                    std::thread::sleep(Duration::from_secs(3));
+                    tauri::async_runtime::block_on(async move {
+                        match run_check_update(&update_handle).await {
+                            Ok(Some(info)) => {
+                                eprintln!("润滴：发现新版本 {}", info.version);
+                            }
+                            Ok(None) => {}
+                            Err(err) => {
+                                eprintln!("润滴：后台检查更新跳过：{err}");
+                            }
+                        }
+                    });
+                })
+                .map_err(|err| -> Box<dyn std::error::Error> { Box::new(err) })?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -719,6 +897,8 @@ pub fn run() {
             pause_today,
             resume,
             remind_now,
+            check_for_update,
+            install_update,
         ])
         .build(tauri::generate_context!())
         .expect("启动润滴失败")

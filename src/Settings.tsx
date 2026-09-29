@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 
 import {
+  checkForUpdate,
   defaultAmountFor,
   getSnapshot,
+  installUpdate,
   onSnapshot,
   pauseHour,
   pauseToday,
@@ -70,6 +72,9 @@ export function Settings() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [installingUpdate, setInstallingUpdate] = useState(false);
+  const [updateHint, setUpdateHint] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
@@ -144,6 +149,36 @@ export function Settings() {
     }
   }
 
+  async function onCheckUpdate() {
+    setCheckingUpdate(true);
+    setUpdateHint(null);
+    try {
+      const info = await checkForUpdate();
+      const next = await getSnapshot();
+      setSnap(next);
+      if (info) {
+        setUpdateHint(`发现新版本 ${info.version}`);
+      } else {
+        setUpdateHint("已是最新版本");
+      }
+    } catch (err) {
+      setUpdateHint(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCheckingUpdate(false);
+    }
+  }
+
+  async function onInstallUpdate() {
+    setInstallingUpdate(true);
+    setUpdateHint("正在下载并安装更新…");
+    try {
+      await installUpdate();
+    } catch (err) {
+      setUpdateHint(err instanceof Error ? err.message : String(err));
+      setInstallingUpdate(false);
+    }
+  }
+
   if (loading || !form || !snap) {
     return (
       <main className="settings">
@@ -185,6 +220,20 @@ export function Settings() {
               : `点「喝了」会加 ${form.drinkAmount} ${form.drinkUnit === "ml" ? "毫升" : form.drinkUnit === "sip" ? "口" : "杯"}。`}
           </p>
         </section>
+
+        {snap.updateAvailable ? (
+          <div className="banner banner-update">
+            <span>发现新版本 {snap.updateAvailable.version}</span>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={installingUpdate}
+              onClick={() => void onInstallUpdate()}
+            >
+              {installingUpdate ? "安装中…" : "立即更新"}
+            </Button>
+          </div>
+        ) : null}
 
         {banner ? (
           <div className="banner">
@@ -370,6 +419,13 @@ export function Settings() {
           <Button variant="outline" onClick={() => void remindNow()}>
             立即提醒
           </Button>
+          <Button
+            variant="outline"
+            disabled={checkingUpdate || installingUpdate}
+            onClick={() => void onCheckUpdate()}
+          >
+            {checkingUpdate ? "正在检查…" : "检查更新"}
+          </Button>
           <div className="row">
             <Button variant="ghost" onClick={() => void pauseHour().then(setSnap)}>
               暂停 1 小时
@@ -380,6 +436,8 @@ export function Settings() {
           </div>
         </div>
 
+        {updateHint ? <p className="hint">{updateHint}</p> : null}
+        <p className="path">版本 {snap.appVersion}</p>
         <p className="path">配置文件 {snap.configPath}</p>
       </div>
     </main>

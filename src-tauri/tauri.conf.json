@@ -18,6 +18,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "publisher": "Rundi",
     "shortDescription": "工作日喝水提醒",
     "longDescription": "在工作日的设定时段里，按时弹出置顶提醒，叫你喝一杯水。",
@@ -30,6 +31,14 @@
     ],
     "macOS": {
       "minimumSystemVersion": "10.15"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE4RTIxMzg0NTRCNzJGNDkKUldSSkw3ZFVoQlBpcUNHNmIzVWpNZVBHV0N5dFgzeFhESE1vejVFTWs4OGdTV1hMVXRVa2RmRkEK",
+      "endpoints": [
+        "https://github.com/duanxingyu/drink-water-notifier/releases/latest/download/latest.json"
+      ]
     }
   }
 }

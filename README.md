@@ -120,13 +120,45 @@ launch_at_login = false
 
 左键或右键图标都可以打开菜单。
 
-- 今日已喝 N 杯（只展示）
+- 今日已喝（按你设的单位显示）
 - 打开设置
 - 立即提醒
 - 暂停 1 小时 / 今日暂停；暂停中会变成「继续提醒」
+- 检查更新；若有新版本会多一项「更新到 x.x.x」
 - 退出
 
 关掉设置窗口不会退出，菜单里写了「关掉这个窗口后，它还在托盘里」。
+
+## 发布与自动更新
+
+已接入 [Tauri Updater](https://v2.tauri.app/plugin/updater/)。客户端会在启动约 3 秒后静默检查 GitHub Releases，也可在设置 / 托盘里手动检查。
+
+### 一次性准备
+
+1. 本机已生成签名密钥（若你是从本仓库继续维护，私钥在 `%USERPROFILE%\.tauri\rundi.key`）。
+2. 打开 GitHub 仓库 → Settings → Secrets and variables → Actions，新增：
+   - `TAURI_SIGNING_PRIVATE_KEY`：私钥文件**全文**（`rundi.key` 内容）
+   - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`：若生成时设了密码就填，没有可留空或不建
+3. 公钥已写在 `src-tauri/tauri.conf.json` 的 `plugins.updater.pubkey`，不要改乱，否则旧客户端验签失败。
+
+### 每次发版
+
+1. 同步提高版本号（必须 semver 递增）：
+   - `src-tauri/tauri.conf.json` 的 `version`
+   - `src-tauri/Cargo.toml` 的 `version`
+   - 可选：根目录 `package.json` 的 `version`
+2. 提交并推送到 GitHub。
+3. 打 tag 并推送：
+
+```bash
+git tag v0.1.1
+git push github v0.1.1
+```
+
+4. Actions 的 **Release** 工作流会打包 Windows / macOS，创建 GitHub Release，并上传 `latest.json` 与签名文件。
+5. 已安装的客户端下次启动（或点「检查更新」）即可升级。
+
+> 注意：只有装过「带 Updater 的构建」的用户才能自动更新。更早的包需要手动装一次新安装包作为基线。
 
 ## 系统限制
 
@@ -163,4 +195,5 @@ tools/gen_assets.py  重新生成图标和提示音
 
 ## 持续集成
 
-`.github/workflows/ci.yml` 在 Ubuntu 上安装 WebKit 依赖后跑 `cargo test` 和 `cargo check`。Windows 和 macOS 上同样跑测试，并用 `tauri-apps/tauri-action` 打安装包。macOS 产物未签名、未公证。
+- `.github/workflows/ci.yml`：推送 / PR 时在 Linux、Windows、macOS 跑测试与 `cargo check`。
+- `.github/workflows/release.yml`：推送 `v*` tag 时打包并发布到 GitHub Releases（含自动更新清单）。
