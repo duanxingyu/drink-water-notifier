@@ -155,7 +155,7 @@ git tag v0.1.1
 git push github v0.1.1
 ```
 
-4. Actions 的 **Release** 工作流会打包 Windows / macOS，创建 GitHub Release，并上传 `latest.json` 与签名文件。
+4. Actions 的 **Release** 工作流会打包 Windows，以及 Ubuntu 22.04 兼容的 Linux（`.deb` / AppImage，面向麒麟等 Debian 系），创建 GitHub Release，并上传 `latest.json` 与签名文件。
 5. 已安装的客户端下次启动（或点「检查更新」）即可升级。
 
 > 注意：只有装过「带 Updater 的构建」的用户才能自动更新。更早的包需要手动装一次新安装包作为基线。
