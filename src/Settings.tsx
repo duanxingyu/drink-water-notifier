@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import {
+  defaultAmountFor,
   getSnapshot,
   onSnapshot,
   pauseHour,
@@ -8,6 +9,7 @@ import {
   remindNow,
   resume,
   saveSettings,
+  type DrinkUnit,
   type SettingsInput,
   type Snapshot,
 } from "@/api";
@@ -27,6 +29,12 @@ const DAYS: Array<[string, string]> = [
   ["Sun", "日"],
 ];
 
+const UNITS: Array<[DrinkUnit, string]> = [
+  ["cup", "杯"],
+  ["ml", "毫升"],
+  ["sip", "口"],
+];
+
 function toForm(snap: Snapshot): SettingsInput {
   return {
     workdays: snap.workdays,
@@ -38,6 +46,9 @@ function toForm(snap: Snapshot): SettingsInput {
     autoDismissSeconds: snap.autoDismissSeconds,
     snoozeMinutes: snap.snoozeMinutes,
     launchAtLogin: snap.launchAtLogin,
+    respectChineseHolidays: snap.respectChineseHolidays,
+    drinkUnit: snap.drinkUnit,
+    drinkAmount: snap.drinkAmount,
   };
 }
 
@@ -103,8 +114,21 @@ export function Settings() {
     patch({ workdays });
   }
 
-  async function onSave() {
+  function setUnit(unit: DrinkUnit) {
     if (!form) return;
+    const amount =
+      form.drinkUnit === unit ? form.drinkAmount : defaultAmountFor(unit);
+    patch({ drinkUnit: unit, drinkAmount: amount });
+  }
+
+  function amountHint(unit: DrinkUnit): string {
+    if (unit === "ml") return "每次点「喝了」加上的毫升数，10 到 1000。";
+    if (unit === "sip") return "每次点「喝了」加上几口，1 到 20。一口、两口会按口语显示。";
+    return "每次点「喝了」加上几杯，1 到 20。";
+  }
+
+  async function onSave() {
+    if (!form || saving) return;
     setSaving(true);
     setSaved(false);
     try {
@@ -143,16 +167,22 @@ export function Settings() {
         <header>
           <p className="kicker">RUNDI</p>
           <h1>润滴</h1>
-          <p className="lede">工作日里，到点就轻轻提醒你喝水。关掉这个窗口后，它还在托盘里。</p>
+          <p className="lede">工作日里，到点就轻轻提醒你喝水。关掉这个窗口后，它还在托盘里。提醒默认在右下角，可拖到别处。</p>
         </header>
 
-        <section className="count-block" aria-label="今日杯数">
+        <section className="count-block" aria-label="今日饮水量">
           <div>
-            <div className="count-num">{String(snap.glassesToday).padStart(2, "0")}</div>
-            <div className="count-caption">今日已喝，单位是杯</div>
+            <div className="count-num">
+              {form.drinkUnit === "ml"
+                ? String(snap.glassesToday)
+                : String(snap.glassesToday).padStart(2, "0")}
+            </div>
+            <div className="count-caption">今日已喝 · {snap.intakeLabel}</div>
           </div>
           <p className="hint">
-            {snap.glassesToday === 0 ? "今天还没有记录。点「喝了」才会计数。" : "点「喝了」才会加一杯。"}
+            {snap.glassesToday === 0
+              ? "今天还没有记录。点「喝了」才会计数。"
+              : `点「喝了」会加 ${form.drinkAmount} ${form.drinkUnit === "ml" ? "毫升" : form.drinkUnit === "sip" ? "口" : "杯"}。`}
           </p>
         </section>
 
@@ -164,6 +194,37 @@ export function Settings() {
             </Button>
           </div>
         ) : null}
+
+        <section className="field">
+          <Label>计量单位</Label>
+          <div className="units" role="group" aria-label="计量单位">
+            {UNITS.map(([code, label]) => (
+              <button
+                key={code}
+                type="button"
+                className={form.drinkUnit === code ? "unit on" : "unit"}
+                aria-pressed={form.drinkUnit === code}
+                onClick={() => setUnit(code)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <div className="field">
+          <Label htmlFor="amount">每次喝多少（{form.drinkUnit === "ml" ? "毫升" : form.drinkUnit === "sip" ? "口" : "杯"}）</Label>
+          <Input
+            id="amount"
+            type="number"
+            min={form.drinkUnit === "ml" ? 10 : 1}
+            max={form.drinkUnit === "ml" ? 1000 : 20}
+            step={form.drinkUnit === "ml" ? 10 : 1}
+            value={form.drinkAmount}
+            onChange={(event) => patch({ drinkAmount: Number(event.target.value) })}
+          />
+          <p className="hint">{amountHint(form.drinkUnit)}</p>
+        </div>
 
         <section className="field">
           <Label>工作日</Label>
@@ -181,6 +242,18 @@ export function Settings() {
             ))}
           </div>
         </section>
+
+        <div className="switch-row">
+          <div>
+            <Label htmlFor="cn-holiday">遵循中国节假日</Label>
+            <p className="hint">法定放假不提醒；调休补班日会提醒，即使那天是周末。</p>
+          </div>
+          <Switch
+            id="cn-holiday"
+            checked={form.respectChineseHolidays}
+            onCheckedChange={(checked) => patch({ respectChineseHolidays: checked })}
+          />
+        </div>
 
         <div className="row">
           <div className="field">
@@ -284,11 +357,15 @@ export function Settings() {
         </div>
 
         {error ? <p className="error">{error}</p> : null}
-        {saved ? <p className="hint">已保存。</p> : null}
+        <p className="hint save-status">{saved ? "已保存。" : "\u00a0"}</p>
 
         <div className="actions">
-          <Button onClick={() => void onSave()} disabled={saving}>
-            {saving ? "正在保存…" : "保存设置"}
+          <Button
+            onClick={() => void onSave()}
+            disabled={saving}
+            className="disabled:opacity-100"
+          >
+            保存设置
           </Button>
           <Button variant="outline" onClick={() => void remindNow()}>
             立即提醒

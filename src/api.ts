@@ -1,3 +1,5 @@
+export type DrinkUnit = "cup" | "ml" | "sip";
+
 export type Snapshot = {
   workdays: string[];
   start: string;
@@ -8,7 +10,12 @@ export type Snapshot = {
   autoDismissSeconds: number;
   snoozeMinutes: number;
   launchAtLogin: boolean;
+  respectChineseHolidays: boolean;
+  drinkUnit: DrinkUnit;
+  drinkAmount: number;
   glassesToday: number;
+  intakeLabel: string;
+  unitLabel: string;
   paused: boolean;
   pausedUntil: string | null;
   configPath: string;
@@ -20,6 +27,11 @@ export type ReminderPayload = {
   autoDismissSeconds: number;
   snoozeMinutes: number;
   glassesToday: number;
+  drinkUnit: DrinkUnit;
+  drinkAmount: number;
+  intakeLabel: string;
+  drinkPrompt: string;
+  drinkAck: string;
 };
 
 export type SettingsInput = {
@@ -32,10 +44,32 @@ export type SettingsInput = {
   autoDismissSeconds: number;
   snoozeMinutes: number;
   launchAtLogin: boolean;
+  respectChineseHolidays: boolean;
+  drinkUnit: DrinkUnit;
+  drinkAmount: number;
 };
 
 export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+export function defaultAmountFor(unit: DrinkUnit): number {
+  return unit === "ml" ? 200 : 1;
+}
+
+export function formatIntake(amount: number, unit: DrinkUnit): string {
+  if (unit === "cup") return `${amount} 杯`;
+  if (unit === "ml") return `${amount} 毫升`;
+  if (amount === 0) return "0 口";
+  if (amount === 1) return "一口";
+  if (amount === 2) return "两口";
+  return `${amount} 口`;
+}
+
+export function unitLabel(unit: DrinkUnit): string {
+  if (unit === "cup") return "杯";
+  if (unit === "ml") return "毫升";
+  return "口";
 }
 
 const preview: Snapshot = {
@@ -48,7 +82,12 @@ const preview: Snapshot = {
   autoDismissSeconds: 20,
   snoozeMinutes: 5,
   launchAtLogin: false,
+  respectChineseHolidays: true,
+  drinkUnit: "cup",
+  drinkAmount: 1,
   glassesToday: 3,
+  intakeLabel: "3 杯",
+  unitLabel: "杯",
   paused: false,
   pausedUntil: null,
   configPath: "预览模式 · 尚未写入系统配置目录",
@@ -61,6 +100,11 @@ const listeners = new Set<(snap: Snapshot) => void>();
 function publish() {
   const next = structuredClone(memory);
   listeners.forEach((listener) => listener(next));
+}
+
+function refreshPreviewLabels() {
+  memory.intakeLabel = formatIntake(memory.glassesToday, memory.drinkUnit);
+  memory.unitLabel = unitLabel(memory.drinkUnit);
 }
 
 async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
@@ -88,6 +132,7 @@ export async function saveSettings(input: SettingsInput): Promise<Snapshot> {
       glassesToday: memory.glassesToday,
       configWarning: null,
     };
+    refreshPreviewLabels();
     publish();
     return structuredClone(memory);
   }
@@ -96,7 +141,8 @@ export async function saveSettings(input: SettingsInput): Promise<Snapshot> {
 
 export async function drink(): Promise<Snapshot> {
   if (!isTauri()) {
-    memory.glassesToday += 1;
+    memory.glassesToday += memory.drinkAmount;
+    refreshPreviewLabels();
     publish();
     return structuredClone(memory);
   }
@@ -174,5 +220,20 @@ export function previewReminder(): ReminderPayload {
     autoDismissSeconds: memory.autoDismissSeconds,
     snoozeMinutes: memory.snoozeMinutes,
     glassesToday: memory.glassesToday,
+    drinkUnit: memory.drinkUnit,
+    drinkAmount: memory.drinkAmount,
+    intakeLabel: memory.intakeLabel,
+    drinkPrompt:
+      memory.drinkUnit === "sip"
+        ? "离开屏幕一小会儿，喝一口水。"
+        : memory.drinkUnit === "ml"
+          ? "离开屏幕一小会儿，喝一点水。"
+          : "离开屏幕一小会儿，喝一杯水。",
+    drinkAck:
+      memory.drinkUnit === "sip"
+        ? "记下这一口"
+        : memory.drinkUnit === "ml"
+          ? "记下这些水"
+          : "记下这一杯",
   };
 }

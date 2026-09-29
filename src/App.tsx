@@ -17,8 +17,12 @@ export function App() {
   const [view, setView] = useState<View | null>(initialView);
 
   useEffect(() => {
+    document.documentElement.classList.toggle("reminder-view", view === "reminder");
+    document.documentElement.classList.toggle("preview", !isTauri() && view !== null);
+  }, [view]);
+
+  useEffect(() => {
     if (!isTauri()) {
-      document.documentElement.classList.add("preview");
       return;
     }
     let stop = false;

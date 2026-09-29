@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use chrono::{NaiveTime, Timelike, Weekday};
 
 use crate::schedule::Schedule;
+use crate::units::{parse_drink_unit, validate_drink_amount, DrinkUnit};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -17,6 +18,10 @@ pub enum ConfigError {
     InvalidTime(String),
     #[error("无法识别星期「{0}」")]
     InvalidWeekday(String),
+    #[error("无法识别计量单位「{0}」，请使用 cup / ml / sip")]
+    InvalidDrinkUnit(String),
+    #[error("每次喝多少：杯和口为 1–20，毫升为 10–1000")]
+    DrinkAmountOutOfRange,
     #[error("音量须在 0 到 1 之间")]
     VolumeOutOfRange,
     #[error("自动关闭时间须在 5 到 180 秒之间")]
@@ -37,6 +42,8 @@ pub struct AppConfig {
     pub auto_dismiss_seconds: u32,
     pub snooze_minutes: u32,
     pub launch_at_login: bool,
+    pub drink_unit: DrinkUnit,
+    pub drink_amount: u32,
 }
 
 impl Default for AppConfig {
@@ -48,6 +55,8 @@ impl Default for AppConfig {
             auto_dismiss_seconds: 20,
             snooze_minutes: 5,
             launch_at_login: false,
+            drink_unit: DrinkUnit::Cup,
+            drink_amount: 1,
         }
     }
 }
@@ -63,6 +72,9 @@ impl AppConfig {
         auto_dismiss_seconds: u32,
         snooze_minutes: u32,
         launch_at_login: bool,
+        respect_chinese_holidays: bool,
+        drink_unit: &str,
+        drink_amount: u32,
     ) -> Result<Self, ConfigError> {
         if !(5..=180).contains(&auto_dismiss_seconds) {
             return Err(ConfigError::DismissOutOfRange);
@@ -73,12 +85,19 @@ impl AppConfig {
         if !volume.is_finite() || !(0.0..=1.0).contains(&volume) {
             return Err(ConfigError::VolumeOutOfRange);
         }
+        let drink_unit = parse_drink_unit(drink_unit)?;
+        validate_drink_amount(drink_unit, drink_amount)?;
         let mut days = Vec::with_capacity(workdays.len());
         for day in workdays {
             days.push(parse_weekday(day)?);
         }
-        let schedule =
-            Schedule::try_new(days, parse_time(start)?, parse_time(end)?, interval_minutes)?;
+        let schedule = Schedule::try_new(
+            days,
+            parse_time(start)?,
+            parse_time(end)?,
+            interval_minutes,
+            respect_chinese_holidays,
+        )?;
         Ok(Self {
             schedule,
             sound_enabled,
@@ -86,6 +105,8 @@ impl AppConfig {
             auto_dismiss_seconds,
             snooze_minutes,
             launch_at_login,
+            drink_unit,
+            drink_amount,
         })
     }
 }
@@ -110,6 +131,12 @@ struct ConfigFile {
     snooze_minutes: u32,
     #[serde(default = "default_login")]
     launch_at_login: bool,
+    #[serde(default = "default_chinese_holidays")]
+    respect_chinese_holidays: bool,
+    #[serde(default = "default_drink_unit")]
+    drink_unit: String,
+    #[serde(default = "default_drink_amount")]
+    drink_amount: u32,
 }
 
 fn default_workdays() -> Vec<String> {
@@ -148,6 +175,15 @@ fn default_snooze() -> u32 {
 fn default_login() -> bool {
     false
 }
+fn default_chinese_holidays() -> bool {
+    true
+}
+fn default_drink_unit() -> String {
+    "cup".into()
+}
+fn default_drink_amount() -> u32 {
+    1
+}
 
 impl Default for ConfigFile {
     fn default() -> Self {
@@ -168,6 +204,9 @@ impl From<&AppConfig> for ConfigFile {
             auto_dismiss_seconds: config.auto_dismiss_seconds,
             snooze_minutes: config.snooze_minutes,
             launch_at_login: config.launch_at_login,
+            respect_chinese_holidays: config.schedule.respect_chinese_holidays,
+            drink_unit: config.drink_unit.code().to_string(),
+            drink_amount: config.drink_amount,
         }
     }
 }
@@ -184,6 +223,9 @@ impl ConfigFile {
             self.auto_dismiss_seconds,
             self.snooze_minutes,
             self.launch_at_login,
+            self.respect_chinese_holidays,
+            &self.drink_unit,
+            self.drink_amount,
         )
     }
 }
@@ -331,52 +373,69 @@ mod tests {
         assert!((config.volume - 0.7).abs() < f32::EPSILON);
         assert_eq!(config.snooze_minutes, 5);
         assert!(!config.launch_at_login);
+        assert!(config.schedule.respect_chinese_holidays);
+        assert_eq!(config.drink_unit, crate::units::DrinkUnit::Cup);
+        assert_eq!(config.drink_amount, 1);
     }
 
     #[test]
     fn rejects_bad_bounds() {
         let days = ["Mon".to_string()];
         assert!(matches!(
-            AppConfig::try_from_parts(&days, "09:30", "18:30", 0, true, 0.5, 20, 5, false),
+            AppConfig::try_from_parts(&days, "09:30", "18:30", 0, true, 0.5, 20, 5, false, true, "cup", 1),
             Err(ConfigError::IntervalOutOfRange)
         ));
         assert!(matches!(
-            AppConfig::try_from_parts(&days, "09:30", "18:30", 241, true, 0.5, 20, 5, false),
+            AppConfig::try_from_parts(&days, "09:30", "18:30", 241, true, 0.5, 20, 5, false, true, "cup", 1),
             Err(ConfigError::IntervalOutOfRange)
         ));
-        assert!(
-            AppConfig::try_from_parts(&days, "09:30", "18:30", 1, true, 0.0, 5, 1, false).is_ok()
-        );
-        assert!(
-            AppConfig::try_from_parts(&days, "09:30", "18:30", 240, true, 1.0, 180, 60, false)
-                .is_ok()
-        );
+        assert!(AppConfig::try_from_parts(
+            &days, "09:30", "18:30", 1, true, 0.0, 5, 1, false, true, "cup", 1
+        )
+        .is_ok());
+        assert!(AppConfig::try_from_parts(
+            &days, "09:30", "18:30", 240, true, 1.0, 180, 60, false, true, "ml", 200
+        )
+        .is_ok());
         assert!(matches!(
-            AppConfig::try_from_parts(&days, "18:30", "09:30", 30, true, 0.5, 20, 5, false),
+            AppConfig::try_from_parts(&days, "18:30", "09:30", 30, true, 0.5, 20, 5, false, true, "cup", 1),
             Err(ConfigError::InvalidWindow)
         ));
         assert!(matches!(
-            AppConfig::try_from_parts(&days, "09:30", "09:30", 30, true, 0.5, 20, 5, false),
+            AppConfig::try_from_parts(&days, "09:30", "09:30", 30, true, 0.5, 20, 5, false, true, "cup", 1),
             Err(ConfigError::InvalidWindow)
         ));
         assert!(matches!(
-            AppConfig::try_from_parts(&[], "09:30", "18:30", 30, true, 0.5, 20, 5, false),
+            AppConfig::try_from_parts(&[], "09:30", "18:30", 30, true, 0.5, 20, 5, false, true, "cup", 1),
             Err(ConfigError::EmptyWorkdays)
         ));
         assert!(matches!(
-            AppConfig::try_from_parts(&days, "09:30", "18:30", 30, true, 1.1, 20, 5, false),
+            AppConfig::try_from_parts(&days, "09:30", "18:30", 30, true, 1.1, 20, 5, false, true, "cup", 1),
             Err(ConfigError::VolumeOutOfRange)
         ));
         assert!(matches!(
-            AppConfig::try_from_parts(&days, "09:30", "18:30", 30, true, f32::NAN, 20, 5, false),
+            AppConfig::try_from_parts(
+                &days,
+                "09:30",
+                "18:30",
+                30,
+                true,
+                f32::NAN,
+                20,
+                5,
+                false,
+                true,
+                "cup",
+                1
+            ),
             Err(ConfigError::VolumeOutOfRange)
         ));
         assert!(matches!(
-            AppConfig::try_from_parts(&days, "09:30", "18:30", 30, true, 0.5, 4, 5, false),
+            AppConfig::try_from_parts(&days, "09:30", "18:30", 30, true, 0.5, 4, 5, false, true, "cup", 1),
             Err(ConfigError::DismissOutOfRange)
         ));
         assert!(matches!(
-            AppConfig::try_from_parts(&days, "09:30", "18:30", 30, true, 0.5, 20, 0, false),
+            AppConfig::try_from_parts(&days, "09:30", "18:30", 30, true, 0.5, 20, 0, false, true, "cup", 1),
             Err(ConfigError::SnoozeOutOfRange)
         ));
         assert!(matches!(
@@ -389,12 +448,15 @@ mod tests {
                 0.5,
                 20,
                 5,
-                false
+                false,
+                true,
+                "cup",
+                1
             ),
             Err(ConfigError::InvalidWeekday(_))
         ));
         assert!(matches!(
-            AppConfig::try_from_parts(&days, "九点半", "18:30", 30, true, 0.5, 20, 5, false),
+            AppConfig::try_from_parts(&days, "九点半", "18:30", 30, true, 0.5, 20, 5, false, true, "cup", 1),
             Err(ConfigError::InvalidTime(_))
         ));
     }
@@ -411,6 +473,9 @@ mod tests {
             30,
             8,
             true,
+            true,
+            "cup",
+            1,
         )
         .unwrap();
         assert_eq!(config.schedule.workdays.len(), 4);
@@ -433,6 +498,9 @@ mod tests {
             25,
             10,
             true,
+            true,
+            "sip",
+            2,
         )
         .unwrap();
         save_config(&path, &config).unwrap();

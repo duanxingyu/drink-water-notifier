@@ -12,21 +12,31 @@ import {
 } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Glass } from "@/Glass";
+import { placeBottomRight, rememberPosition, restorePosition } from "@/windowDock";
 
 type Phase = "ask" | "drank" | "later" | "gone";
+
+const EXIT_MS = 380;
 
 export function Reminder() {
   const [payload, setPayload] = useState<ReminderPayload | null>(null);
   const [left, setLeft] = useState(0);
   const [phase, setPhase] = useState<Phase>("ask");
+  const [exiting, setExiting] = useState(false);
   const seen = useRef(0);
+  const exitingRef = useRef(false);
 
   function arm(next: ReminderPayload) {
     if (next.token <= seen.current) return;
     seen.current = next.token;
+    exitingRef.current = false;
+    setExiting(false);
     setPayload(next);
     setLeft(next.autoDismissSeconds);
     setPhase("ask");
+    if (isTauri()) {
+      void restorePosition().catch(() => void placeBottomRight());
+    }
   }
 
   useEffect(() => {
@@ -50,7 +60,7 @@ export function Reminder() {
   }, []);
 
   useEffect(() => {
-    if (!payload || phase !== "ask") return;
+    if (!payload || phase !== "ask" || exiting) return;
     const started = Date.now();
     const total = payload.autoDismissSeconds * 1000;
     const timer = window.setInterval(() => {
@@ -58,19 +68,23 @@ export function Reminder() {
       setLeft(Math.ceil(remain / 1000));
       if (remain <= 0) {
         window.clearInterval(timer);
-        setPhase("gone");
-        void dismiss();
+        void exitThen(() => {
+          setPhase("gone");
+          void dismiss();
+        });
       }
     }, 200);
     return () => window.clearInterval(timer);
-  }, [payload, phase]);
+  }, [payload, phase, exiting]);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      if (phase !== "ask") return;
+      if (phase !== "ask" || exiting) return;
       if (event.key === "Escape") {
-        setPhase("gone");
-        void dismiss();
+        void exitThen(() => {
+          setPhase("gone");
+          void dismiss();
+        });
       }
       if (event.key === "Enter") {
         void confirmDrink();
@@ -80,18 +94,38 @@ export function Reminder() {
     return () => window.removeEventListener("keydown", onKey);
   });
 
+  function exitThen(done: () => void) {
+    if (exitingRef.current) return;
+    exitingRef.current = true;
+    setExiting(true);
+    window.setTimeout(done, EXIT_MS);
+  }
+
   async function confirmDrink() {
+    if (exiting) return;
     setPhase("drank");
-    window.setTimeout(() => {
+    exitThen(() => {
       void drink();
-    }, 420);
+    });
   }
 
   async function confirmLater() {
+    if (exiting) return;
     setPhase("later");
-    window.setTimeout(() => {
+    exitThen(() => {
       void snooze();
-    }, 420);
+    });
+  }
+
+  async function onDragDown(event: React.MouseEvent) {
+    if (!isTauri() || event.button !== 0 || exiting) return;
+    if ((event.target as HTMLElement).closest("button, a, input")) return;
+    try {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      await getCurrentWindow().startDragging();
+    } finally {
+      await rememberPosition();
+    }
   }
 
   if (!payload || phase === "gone") {
@@ -99,44 +133,42 @@ export function Reminder() {
   }
 
   const minutes = payload.snoozeMinutes;
+  const cardClass = exiting ? "card card-out" : "card card-in";
 
   return (
-    <div
-      className="stage"
-      onClick={() => {
-        setPhase("gone");
-        void dismiss();
-      }}
-    >
+    <div className="stage">
       <section
-        className="card"
+        key={payload.token}
+        className={cardClass}
         role="dialog"
         aria-label="该喝水啦"
-        onClick={(event) => event.stopPropagation()}
+        onMouseDown={(event) => void onDragDown(event)}
       >
-        <div className="brand">
+        <div className="brand card-item">
           <span>润滴</span>
-          <span>{left} 秒后关闭</span>
+          <span className="drag-hint">拖动 · {left}s</span>
         </div>
         {phase === "ask" ? (
           <>
-            <h1 className="headline">该喝水啦 💧</h1>
-            <p className="sub">离开屏幕一小会儿，喝一杯水。</p>
-            <div className="glass-wrap">
+            <h1 className="headline card-item">该喝水啦</h1>
+            <p className="sub card-item">{payload.drinkPrompt}</p>
+            <div className="glass-wrap card-item">
               <Glass dismissSeconds={payload.autoDismissSeconds} />
             </div>
-            <p className="meta">今日已喝 {payload.glassesToday} 杯</p>
-            <div className="actions">
-              <Button variant="drink" size="lg" onClick={() => void confirmDrink()}>
+            <p className="meta card-item">今日已喝 {payload.intakeLabel}</p>
+            <div className="actions card-item">
+              <Button variant="drink" size="default" onClick={() => void confirmDrink()}>
                 喝了
               </Button>
-              <Button variant="outline" size="lg" onClick={() => void confirmLater()}>
-                稍后提醒（{minutes} 分钟）
+              <Button variant="outline" size="default" onClick={() => void confirmLater()}>
+                稍后（{minutes} 分）
               </Button>
             </div>
           </>
         ) : (
-          <p className="toast">{phase === "drank" ? "记下这一杯" : `${minutes} 分钟后再叫你`}</p>
+          <p className="toast card-item">
+            {phase === "drank" ? payload.drinkAck : `${minutes} 分钟后再叫你`}
+          </p>
         )}
       </section>
     </div>

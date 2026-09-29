@@ -9,8 +9,9 @@ use std::time::Duration;
 use chrono::{DateTime, FixedOffset, Local, TimeDelta};
 use rundi_core::{
     apply_pause, apply_snooze, clear_pause, config_file_path, end_of_local_day, evaluate,
-    glasses_on, load_config, load_state, mark_shown, record_glass, save_config, save_state,
-    state_file_path, weekday_code, AppConfig, DailyCount, Decision, RuntimeState,
+    format_drink_ack, format_drink_prompt, format_intake, glasses_on, load_config, load_state,
+    mark_shown, record_intake, save_config, save_state, state_file_path, weekday_code, AppConfig,
+    DailyCount, Decision, RuntimeState,
 };
 use serde::{Deserialize, Serialize};
 use tauri::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
@@ -79,6 +80,11 @@ struct ReminderPayload {
     auto_dismiss_seconds: u32,
     snooze_minutes: u32,
     glasses_today: u32,
+    drink_unit: String,
+    drink_amount: u32,
+    intake_label: String,
+    drink_prompt: String,
+    drink_ack: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -93,7 +99,12 @@ struct Snapshot {
     auto_dismiss_seconds: u32,
     snooze_minutes: u32,
     launch_at_login: bool,
+    respect_chinese_holidays: bool,
+    drink_unit: String,
+    drink_amount: u32,
     glasses_today: u32,
+    intake_label: String,
+    unit_label: String,
     paused: bool,
     paused_until: Option<String>,
     config_path: String,
@@ -112,6 +123,9 @@ struct SettingsInput {
     auto_dismiss_seconds: u32,
     snooze_minutes: u32,
     launch_at_login: bool,
+    respect_chinese_holidays: bool,
+    drink_unit: String,
+    drink_amount: u32,
 }
 
 fn local_now() -> DateTime<FixedOffset> {
@@ -121,6 +135,7 @@ fn local_now() -> DateTime<FixedOffset> {
 fn snapshot_from(guard: &Inner) -> Snapshot {
     let now = local_now();
     let paused_until = guard.runtime.paused_until.filter(|until| now < *until);
+    let glasses_today = glasses_on(&guard.daily, now.date_naive());
     Snapshot {
         workdays: guard
             .config
@@ -139,7 +154,12 @@ fn snapshot_from(guard: &Inner) -> Snapshot {
         auto_dismiss_seconds: guard.config.auto_dismiss_seconds,
         snooze_minutes: guard.config.snooze_minutes,
         launch_at_login: guard.config.launch_at_login,
-        glasses_today: glasses_on(&guard.daily, now.date_naive()),
+        respect_chinese_holidays: guard.config.schedule.respect_chinese_holidays,
+        drink_unit: guard.config.drink_unit.code().to_string(),
+        drink_amount: guard.config.drink_amount,
+        glasses_today,
+        intake_label: format_intake(glasses_today, guard.config.drink_unit),
+        unit_label: guard.config.drink_unit.label().to_string(),
         paused: paused_until.is_some(),
         paused_until: paused_until.map(|time| time.to_rfc3339()),
         config_path: guard.config_path.display().to_string(),
@@ -171,7 +191,7 @@ fn load_inner() -> (Inner, bool) {
     let (runtime, daily) = match load_state(&state_path) {
         Ok(pair) => pair,
         Err(err) => {
-            warning = Some(format!("状态没有读出来，今日杯数从 0 开始。{err}"));
+            warning = Some(format!("状态没有读出来，今日计数从 0 开始。{err}"));
             (RuntimeState::default(), DailyCount::default())
         }
     };
@@ -211,6 +231,12 @@ fn publish(app: &AppHandle, state: &AppState) {
     let _ = app.emit("snapshot", state.snapshot());
 }
 
+/// 保存设置时托盘文案不会变，跳过重建菜单，避免 Windows 上窗口/托盘闪一下。
+fn publish_config(app: &AppHandle, state: &AppState) {
+    state.wake();
+    let _ = app.emit("snapshot", state.snapshot());
+}
+
 fn hide_reminder(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("reminder") {
         let _ = window.hide();
@@ -233,11 +259,26 @@ fn present_reminder(app: &AppHandle, payload: &ReminderPayload) {
     let _ = window.emit("reminder", payload);
     let _ = window.unminimize();
     let _ = window.show();
-    let _ = window.center();
     let _ = window.set_always_on_top(true);
     #[cfg(target_os = "macos")]
     panel::raise_above_fullscreen(&window);
     let _ = window.set_focus();
+}
+
+/// 默认摆在当前显示器工作区右下角，留一点边距，避免挡正中间视野。
+fn place_reminder_bottom_right(window: &WebviewWindow) {
+    let Ok(Some(monitor)) = window.current_monitor() else {
+        return;
+    };
+    let Ok(size) = window.outer_size() else {
+        return;
+    };
+    let scale = monitor.scale_factor();
+    let work = monitor.work_area();
+    let margin = (16.0 * scale).round() as i32;
+    let x = work.position.x + work.size.width as i32 - size.width as i32 - margin;
+    let y = work.position.y + work.size.height as i32 - size.height as i32 - margin;
+    let _ = window.set_position(tauri::PhysicalPosition::new(x.max(work.position.x), y.max(work.position.y)));
 }
 
 fn build_menu(app: &AppHandle, state: &AppState) -> tauri::Result<Menu<tauri::Wry>> {
@@ -245,7 +286,7 @@ fn build_menu(app: &AppHandle, state: &AppState) -> tauri::Result<Menu<tauri::Wr
     let count = MenuItem::with_id(
         app,
         "count",
-        format!("今日已喝 {} 杯", snap.glasses_today),
+        format!("今日已喝 {}", snap.intake_label),
         false,
         None::<&str>,
     )?;
@@ -401,11 +442,17 @@ fn scheduler_loop(app: AppHandle, sync: Arc<InnerSync>) {
         if should_show {
             mark_shown(&mut guard.runtime, now);
             guard.token = guard.token.saturating_add(1);
+            let glasses_today = glasses_on(&guard.daily, now.date_naive());
             let payload = ReminderPayload {
                 token: guard.token,
                 auto_dismiss_seconds: guard.config.auto_dismiss_seconds,
                 snooze_minutes: guard.config.snooze_minutes,
-                glasses_today: glasses_on(&guard.daily, now.date_naive()),
+                glasses_today,
+                drink_unit: guard.config.drink_unit.code().to_string(),
+                drink_amount: guard.config.drink_amount,
+                intake_label: format_intake(glasses_today, guard.config.drink_unit),
+                drink_prompt: format_drink_prompt(guard.config.drink_unit).to_string(),
+                drink_ack: format_drink_ack(guard.config.drink_unit).to_string(),
             };
             guard.active = Some(payload.clone());
             let sound = guard.config.sound_enabled;
@@ -459,7 +506,7 @@ fn install_windows(app: &AppHandle) -> tauri::Result<()> {
 
     let reminder = WebviewWindowBuilder::new(app, "reminder", WebviewUrl::App("index.html".into()))
         .title("该喝水啦")
-        .inner_size(440.0, 600.0)
+        .inner_size(300.0, 420.0)
         .resizable(false)
         .maximizable(false)
         .minimizable(false)
@@ -471,9 +518,9 @@ fn install_windows(app: &AppHandle) -> tauri::Result<()> {
         .skip_taskbar(true)
         .visible(false)
         .focused(false)
-        .center()
         .background_color(Color(0, 0, 0, 0))
         .build()?;
+    place_reminder_bottom_right(&reminder);
     keep_in_background(&reminder);
     Ok(())
 }
@@ -519,6 +566,9 @@ fn save_settings(
         input.auto_dismiss_seconds,
         input.snooze_minutes,
         input.launch_at_login,
+        input.respect_chinese_holidays,
+        &input.drink_unit,
+        input.drink_amount,
     )
     .map_err(|err| err.to_string())?;
     {
@@ -537,7 +587,7 @@ fn save_settings(
         let mut guard = state.lock();
         guard.config_warning = warning;
     }
-    publish(&app, &state);
+    publish_config(&app, &state);
     Ok(state.snapshot())
 }
 
@@ -547,7 +597,8 @@ fn drink(app: AppHandle, state: State<AppState>) -> Result<Snapshot, String> {
         let mut guard = state.lock();
         let now = local_now();
         let previous = guard.daily.clone();
-        record_glass(&mut guard.daily, now.date_naive());
+        let amount = guard.config.drink_amount;
+        record_intake(&mut guard.daily, now.date_naive(), amount);
         guard.active = None;
         if let Err(err) = persist(&guard) {
             guard.daily = previous;

@@ -28,12 +28,13 @@ pub fn glasses_on(count: &DailyCount, today: NaiveDate) -> u32 {
     }
 }
 
-pub fn record_glass(count: &mut DailyCount, today: NaiveDate) -> u32 {
+pub fn record_intake(count: &mut DailyCount, today: NaiveDate, amount: u32) -> u32 {
+    let add = amount.max(1);
     if count.date != today {
         count.date = today;
         count.glasses = 0;
     }
-    count.glasses = count.glasses.saturating_add(1);
+    count.glasses = count.glasses.saturating_add(add);
     count.glasses
 }
 
@@ -140,12 +141,12 @@ mod tests {
         let mut count = DailyCount::default();
         let today = NaiveDate::from_ymd_opt(2026, 9, 28).unwrap();
         assert_eq!(glasses_on(&count, today), 0);
-        assert_eq!(record_glass(&mut count, today), 1);
-        assert_eq!(record_glass(&mut count, today), 2);
+        assert_eq!(record_intake(&mut count, today, 1), 1);
+        assert_eq!(record_intake(&mut count, today, 1), 2);
         assert_eq!(glasses_on(&count, today), 2);
         let tomorrow = today + TimeDelta::days(1);
         assert_eq!(glasses_on(&count, tomorrow), 0);
-        assert_eq!(record_glass(&mut count, tomorrow), 1);
+        assert_eq!(record_intake(&mut count, tomorrow, 1), 1);
         assert_eq!(glasses_on(&count, today), 0);
     }
 
@@ -165,8 +166,8 @@ mod tests {
         mark_shown(&mut runtime, now);
         apply_snooze(&mut runtime, now + TimeDelta::minutes(5));
         let mut daily = DailyCount::default();
-        record_glass(&mut daily, now.date_naive());
-        record_glass(&mut daily, now.date_naive());
+        record_intake(&mut daily, now.date_naive(), 1);
+        record_intake(&mut daily, now.date_naive(), 1);
         save_state(&path, &runtime, &daily).unwrap();
 
         let (loaded, loaded_daily) = load_state(&path).unwrap();

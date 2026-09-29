@@ -1,5 +1,7 @@
 use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, NaiveTime, TimeDelta, TimeZone, Weekday};
 
+use crate::holiday::china_day_override;
+
 /// 半开区间 `[start, end)`。结束时刻本身不再提醒。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Schedule {
@@ -7,6 +9,8 @@ pub struct Schedule {
     pub start: NaiveTime,
     pub end: NaiveTime,
     pub interval: TimeDelta,
+    /// 结合国务院放假安排：法定节假日不提醒，调休补班日提醒。
+    pub respect_chinese_holidays: bool,
 }
 
 impl Default for Schedule {
@@ -22,6 +26,7 @@ impl Default for Schedule {
             start: NaiveTime::from_hms_opt(9, 30, 0).expect("09:30"),
             end: NaiveTime::from_hms_opt(18, 30, 0).expect("18:30"),
             interval: TimeDelta::minutes(30),
+            respect_chinese_holidays: true,
         }
     }
 }
@@ -32,6 +37,7 @@ impl Schedule {
         start: NaiveTime,
         end: NaiveTime,
         interval_minutes: u32,
+        respect_chinese_holidays: bool,
     ) -> Result<Self, crate::config::ConfigError> {
         let workdays = normalize(workdays);
         if workdays.is_empty() {
@@ -48,6 +54,7 @@ impl Schedule {
             start,
             end,
             interval: TimeDelta::minutes(i64::from(interval_minutes)),
+            respect_chinese_holidays,
         })
     }
 
@@ -144,11 +151,20 @@ fn normalize(days: impl IntoIterator<Item = Weekday>) -> Vec<Weekday> {
     days
 }
 
+fn is_working_day(date: NaiveDate, schedule: &Schedule) -> bool {
+    if schedule.respect_chinese_holidays {
+        if let Some(forced) = china_day_override(date) {
+            return forced;
+        }
+    }
+    schedule.workdays.contains(&date.weekday())
+}
+
 fn in_window(now: DateTime<FixedOffset>, schedule: &Schedule) -> bool {
     if schedule.workdays.is_empty() || schedule.start >= schedule.end {
         return false;
     }
-    if !schedule.workdays.contains(&now.weekday()) {
+    if !is_working_day(now.date_naive(), schedule) {
         return false;
     }
     let time = now.time();
@@ -162,16 +178,22 @@ fn next_window_start(now: DateTime<FixedOffset>, schedule: &Schedule) -> DateTim
 
     let offset = *now.offset();
     let today = now.date_naive();
-    if schedule.workdays.contains(&today.weekday()) {
+    if is_working_day(today, schedule) {
         let start = at_time(today, schedule.start, offset);
         if now < start {
             return start;
         }
     }
 
-    for day in 1..=7 {
+    // 法定长假可能跨一周以上，多往后看几天。
+    let horizon = if schedule.respect_chinese_holidays {
+        60
+    } else {
+        7
+    };
+    for day in 1..=horizon {
         let date = today + TimeDelta::days(day);
-        if schedule.workdays.contains(&date.weekday()) {
+        if is_working_day(date, schedule) {
             return at_time(date, schedule.start, offset);
         }
     }
@@ -214,7 +236,11 @@ mod tests {
     }
 
     fn schedule() -> Schedule {
-        Schedule::default()
+        Schedule {
+            // 单测按纯星期推算，避开节假日数据年份差异。
+            respect_chinese_holidays: false,
+            ..Schedule::default()
+        }
     }
 
     #[test]
@@ -248,8 +274,14 @@ mod tests {
     fn one_second_before_end_shows_when_due() {
         let mut state = RuntimeState::default();
         state.last_shown = Some(at(on(Weekday::Mon), 17, 59, 59));
-        let sched =
-            Schedule::try_new(schedule().workdays, schedule().start, schedule().end, 30).unwrap();
+        let sched = Schedule::try_new(
+            schedule().workdays,
+            schedule().start,
+            schedule().end,
+            30,
+            false,
+        )
+        .unwrap();
         // 间隔 30 分钟，上次 17:59:59，下一次 18:29:59，仍在 18:30 之前。
         let now = at(on(Weekday::Mon), 18, 29, 59);
         assert_eq!(evaluate(now, &sched, &state), Decision::Show);
@@ -357,6 +389,7 @@ mod tests {
             schedule().start,
             schedule().end,
             30,
+            false,
         )
         .unwrap();
 
@@ -384,6 +417,7 @@ mod tests {
             NaiveTime::from_hms_opt(9, 30, 0).unwrap(),
             NaiveTime::from_hms_opt(18, 30, 0).unwrap(),
             240,
+            false,
         )
         .unwrap();
         let friday_night = at(on(Weekday::Fri), 20, 0, 0);
@@ -408,6 +442,7 @@ mod tests {
             NaiveTime::from_hms_opt(9, 30, 0).unwrap(),
             NaiveTime::from_hms_opt(10, 0, 0).unwrap(),
             240,
+            false,
         )
         .unwrap();
         let open = at(on(Weekday::Mon), 9, 30, 0);
@@ -565,5 +600,26 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn chinese_holiday_skips_statutory_leave_and_honors_makeup() {
+        let sched = Schedule {
+            respect_chinese_holidays: true,
+            ..schedule()
+        };
+        // 2025-01-01 周三元旦放假
+        let new_year = NaiveDate::from_ymd_opt(2025, 1, 1).unwrap();
+        assert_eq!(
+            evaluate(at(new_year, 10, 0, 0), &sched, &RuntimeState::default()),
+            Decision::WaitUntil(at(NaiveDate::from_ymd_opt(2025, 1, 2).unwrap(), 9, 30, 0))
+        );
+        // 2025-01-26 周日春节调休补班
+        let makeup = NaiveDate::from_ymd_opt(2025, 1, 26).unwrap();
+        assert_eq!(makeup.weekday(), Weekday::Sun);
+        assert_eq!(
+            evaluate(at(makeup, 9, 30, 0), &sched, &RuntimeState::default()),
+            Decision::Show
+        );
     }
 }

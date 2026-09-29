@@ -1,0 +1,26 @@
+# SCM「生成提交信息」（闪电图标）专用约定
+# 说明：Cursor Source Control 的生成提交信息只读取本文件，不读 .cursor/rules / User Rules。
+
+When generating a Git commit message for this repository:
+- Use Simplified Chinese for the description (type/scope may stay in English)
+- Format: type(scope): 中文描述
+- type must be one of: feat|fix|refactor|docs|chore|style|test|perf|build|ci
+- Never add Co-authored-by / Co-Authored-By or any AI/tool attribution lines
+
+## Specificity (required)
+- Do NOT write vague one-liners like「优化代码」「修复问题」「更新配置」「调整样式」
+- Subject line must name the concrete change: which module/page/API/behavior, and what became different
+- Prefer: 文件/功能点 + 动作 + 结果（例如「嵌入模式关闭侧栏与登录页重定向」）
+- If the staged diff touches multiple concerns, add a body with 2–5 bullets, each stating one concrete change from the diff
+- Base the message on the actual diff; do not invent changes that are not in the staged files
+- Keep subject under ~72 characters; put detail in the body rather than making the subject abstract
+
+## Good examples
+- feat(frontend): 首页嵌入模式隐藏布局侧栏并禁用登录页跳转
+- fix(auth): 刷新令牌过期后清除本地会话并跳转登录页
+- refactor(dashboard): remAdapt 按容器宽度重算根字号，避免 iframe 裁切
+
+## Bad examples (never generate these)
+- chore: 更新代码
+- fix: 修复 bug
+- feat(frontend): 优化用户体验

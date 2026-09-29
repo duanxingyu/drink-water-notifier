@@ -7,6 +7,7 @@ license = "MIT"
 publish = false
 
 [dependencies]
+chinese_holiday = "2026.0.1"
 chrono = { version = "0.4.45", features = ["serde"] }
 dirs = "6"
 serde = { version = "1", features = ["derive"] }
