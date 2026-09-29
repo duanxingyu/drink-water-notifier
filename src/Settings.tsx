@@ -396,7 +396,9 @@ export function Settings() {
         <div className="switch-row">
           <div>
             <Label htmlFor="login">开机时启动</Label>
-            <p className="hint">登录后在后台运行。请在安装好的应用里打开，开发版路径会变。</p>
+            <p className="hint">
+              登录后在后台运行。须在已安装的 Rundi 里打开并点「保存设置」；开发版不会改系统开机项，以免把安装版注册表冲掉。
+            </p>
           </div>
           <Switch
             id="login"

@@ -230,10 +230,37 @@ fn persist(guard: &Inner) -> Result<(), String> {
     save_state(&guard.state_path, &guard.runtime, &guard.daily).map_err(|err| err.to_string())
 }
 
+/// `cargo run` / `tauri dev` 产物路径（`target/debug|release`）。
+/// 这类二进制与安装版共用 `%APPDATA%/rundi` 配置；若对它们调用 enable/disable，
+/// 会把 Run 注册表写成临时路径，或清掉安装版已经写好的开机启动项。
+fn executable_is_cargo_target() -> bool {
+    let Ok(exe) = std::env::current_exe() else {
+        return true;
+    };
+    let path = exe.to_string_lossy().replace('\\', "/").to_ascii_lowercase();
+    path.contains("/target/debug/") || path.contains("/target/release/")
+}
+
 fn sync_autostart(app: &AppHandle, enabled: bool) -> Result<(), String> {
+    if executable_is_cargo_target() {
+        return if enabled {
+            Err(
+                "当前是开发构建，不会改开机启动注册表（避免覆盖安装版）。请在已安装的 Rundi 里打开并保存。"
+                    .into(),
+            )
+        } else {
+            // 配置可以关掉，但不要在这里 delete 注册表，以免误伤安装版的开机项。
+            Ok(())
+        };
+    }
     let auto = app.autolaunch();
     if enabled {
-        auto.enable().map_err(|err| err.to_string())
+        auto.enable().map_err(|err| err.to_string())?;
+        match auto.is_enabled() {
+            Ok(true) => Ok(()),
+            Ok(false) => Err("已写入注册表，但系统仍显示未启用（可能被任务管理器禁用了启动项）".into()),
+            Err(err) => Err(err.to_string()),
+        }
     } else {
         auto.disable().map_err(|err| err.to_string())
     }
