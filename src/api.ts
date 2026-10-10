@@ -5,6 +5,15 @@ export type UpdateInfo = {
   body: string | null;
 };
 
+export type DrinkHistoryDay = {
+  date: string;
+  amount: number;
+  unit: DrinkUnit;
+  label: string;
+  convertedLabel: string | null;
+  isToday: boolean;
+};
+
 export type Snapshot = {
   workdays: string[];
   start: string;
@@ -56,12 +65,45 @@ export type SettingsInput = {
   drinkAmount: number;
 };
 
+/** 1 杯 ≈ 350 毫升 */
+export const ML_PER_CUP = 350;
+/** 1 口 ≈ 80 毫升 */
+export const ML_PER_SIP = 80;
+
 export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
 export function defaultAmountFor(unit: DrinkUnit): number {
   return unit === "ml" ? 200 : 1;
+}
+
+export function toMl(amount: number, unit: DrinkUnit): number {
+  if (unit === "ml") return amount;
+  if (unit === "cup") return amount * ML_PER_CUP;
+  return amount * ML_PER_SIP;
+}
+
+export function fromMl(ml: number, unit: DrinkUnit): number {
+  if (unit === "ml") return Math.round(ml);
+  if (unit === "cup") return Math.round(ml / ML_PER_CUP);
+  return Math.round(ml / ML_PER_SIP);
+}
+
+export function convertDrinkAmount(amount: number, from: DrinkUnit, to: DrinkUnit): number {
+  if (from === to) return amount;
+  const converted = fromMl(toMl(amount, from), to);
+  if (to === "ml") return Math.min(1000, Math.max(10, converted));
+  return Math.min(20, Math.max(1, converted));
+}
+
+export function convertIntakeTotal(amount: number, from: DrinkUnit, to: DrinkUnit): number {
+  if (from === to) return amount;
+  return Math.max(0, fromMl(toMl(amount, from), to));
+}
+
+export function counterpartUnit(unit: DrinkUnit): DrinkUnit {
+  return unit === "ml" ? "cup" : "ml";
 }
 
 export function formatIntake(amount: number, unit: DrinkUnit): string {
@@ -71,6 +113,23 @@ export function formatIntake(amount: number, unit: DrinkUnit): string {
   if (amount === 1) return "一口";
   if (amount === 2) return "两口";
   return `${amount} 口`;
+}
+
+export function formatIntakeApprox(
+  amount: number,
+  from: DrinkUnit,
+  to: DrinkUnit,
+): string | null {
+  if (from === to) return null;
+  const converted = convertIntakeTotal(amount, from, to);
+  if (converted === 0 && amount > 0) {
+    if (to !== "ml") {
+      const ml = toMl(amount, from);
+      if (ml > 0) return `约 ${ml} 毫升`;
+    }
+    return null;
+  }
+  return `约 ${formatIntake(converted, to)}`;
 }
 
 export function unitLabel(unit: DrinkUnit): string {
@@ -104,7 +163,39 @@ const preview: Snapshot = {
 };
 
 let memory = structuredClone(preview);
+let previewHistory: DrinkHistoryDay[] = [
+  {
+    date: new Date().toISOString().slice(0, 10),
+    amount: 3,
+    unit: "cup",
+    label: "3 杯",
+    convertedLabel: "约 1050 毫升",
+    isToday: true,
+  },
+  {
+    date: offsetDate(-1),
+    amount: 600,
+    unit: "ml",
+    label: "600 毫升",
+    convertedLabel: "约 2 杯",
+    isToday: false,
+  },
+  {
+    date: offsetDate(-2),
+    amount: 5,
+    unit: "sip",
+    label: "5 口",
+    convertedLabel: "约 400 毫升",
+    isToday: false,
+  },
+];
 const listeners = new Set<(snap: Snapshot) => void>();
+
+function offsetDate(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
 
 function publish() {
   const next = structuredClone(memory);
@@ -114,6 +205,32 @@ function publish() {
 function refreshPreviewLabels() {
   memory.intakeLabel = formatIntake(memory.glassesToday, memory.drinkUnit);
   memory.unitLabel = unitLabel(memory.drinkUnit);
+}
+
+function refreshPreviewHistoryToday() {
+  const today = new Date().toISOString().slice(0, 10);
+  const rest = previewHistory.filter((day) => !day.isToday);
+  previewHistory = [
+    {
+      date: today,
+      amount: memory.glassesToday,
+      unit: memory.drinkUnit,
+      label: formatIntake(memory.glassesToday, memory.drinkUnit),
+      convertedLabel: formatIntakeApprox(
+        memory.glassesToday,
+        memory.drinkUnit,
+        counterpartUnit(memory.drinkUnit),
+      ),
+      isToday: true,
+    },
+    ...rest.map((day) => ({
+      ...day,
+      convertedLabel:
+        day.unit === memory.drinkUnit
+          ? formatIntakeApprox(day.amount, day.unit, counterpartUnit(memory.drinkUnit))
+          : formatIntakeApprox(day.amount, day.unit, memory.drinkUnit),
+    })),
+  ];
 }
 
 async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
@@ -133,15 +250,23 @@ export async function activeReminder(): Promise<ReminderPayload | null> {
 
 export async function saveSettings(input: SettingsInput): Promise<Snapshot> {
   if (!isTauri()) {
+    if (input.drinkUnit !== memory.drinkUnit) {
+      memory.glassesToday = convertIntakeTotal(
+        memory.glassesToday,
+        memory.drinkUnit,
+        input.drinkUnit,
+      );
+    }
     memory = {
       ...memory,
       ...input,
+      glassesToday: memory.glassesToday,
       paused: memory.paused,
       pausedUntil: memory.pausedUntil,
-      glassesToday: memory.glassesToday,
       configWarning: null,
     };
     refreshPreviewLabels();
+    refreshPreviewHistoryToday();
     publish();
     return structuredClone(memory);
   }
@@ -152,10 +277,27 @@ export async function drink(): Promise<Snapshot> {
   if (!isTauri()) {
     memory.glassesToday += memory.drinkAmount;
     refreshPreviewLabels();
+    refreshPreviewHistoryToday();
     publish();
     return structuredClone(memory);
   }
   return invoke<Snapshot>("drink");
+}
+
+export async function getDrinkHistory(): Promise<DrinkHistoryDay[]> {
+  if (!isTauri()) {
+    refreshPreviewHistoryToday();
+    return structuredClone(previewHistory);
+  }
+  return invoke<DrinkHistoryDay[]>("get_drink_history");
+}
+
+export async function clearDrinkHistory(): Promise<DrinkHistoryDay[]> {
+  if (!isTauri()) {
+    previewHistory = previewHistory.filter((day) => day.isToday);
+    return structuredClone(previewHistory);
+  }
+  return invoke<DrinkHistoryDay[]>("clear_drink_history");
 }
 
 export async function snooze(): Promise<Snapshot> {

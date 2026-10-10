@@ -2,7 +2,14 @@ import { useEffect, useRef, useState } from "react";
 
 import {
   checkForUpdate,
+  clearDrinkHistory,
+  convertDrinkAmount,
+  convertIntakeTotal,
+  counterpartUnit,
   defaultAmountFor,
+  formatIntake,
+  formatIntakeApprox,
+  getDrinkHistory,
   getSnapshot,
   installUpdate,
   isTauri,
@@ -12,6 +19,7 @@ import {
   remindNow,
   resume,
   saveSettings,
+  type DrinkHistoryDay,
   type DrinkUnit,
   type SettingsInput,
   type Snapshot,
@@ -87,6 +95,23 @@ function parseNumberInput(raw: string): number {
   return raw === "" ? Number.NaN : Number(raw);
 }
 
+function formatHistoryDate(iso: string, isToday: boolean): string {
+  if (isToday) return "今天";
+  const day = new Date(`${iso}T12:00:00`);
+  if (Number.isNaN(day.getTime())) return iso;
+  const yesterday = new Date();
+  yesterday.setHours(12, 0, 0, 0);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (
+    day.getFullYear() === yesterday.getFullYear() &&
+    day.getMonth() === yesterday.getMonth() &&
+    day.getDate() === yesterday.getDate()
+  ) {
+    return "昨天";
+  }
+  return `${day.getMonth() + 1}月${day.getDate()}日`;
+}
+
 export function Settings() {
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [form, setForm] = useState<SettingsInput | null>(null);
@@ -101,6 +126,11 @@ export function Settings() {
     tone: "ok" | "error" | "progress";
   } | null>(null);
   const [updateDialog, setUpdateDialog] = useState<UpdateInfo | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyDays, setHistoryDays] = useState<DrinkHistoryDay[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyConfirmClear, setHistoryConfirmClear] = useState(false);
+  const [historyClearing, setHistoryClearing] = useState(false);
   /** 各单位上次填过的「每次喝多少」，切换单位时不要丢回默认值。 */
   const amountByUnit = useRef<Partial<Record<DrinkUnit, number>>>({});
   /** 用户点过「稍后」的版本，避免同版本反复弹窗。 */
@@ -212,8 +242,47 @@ export function Settings() {
       amountByUnit.current[form.drinkUnit] = form.drinkAmount;
     }
     const remembered = amountByUnit.current[unit];
-    const amount = Number.isFinite(remembered) ? remembered! : defaultAmountFor(unit);
+    const amount = Number.isFinite(remembered)
+      ? remembered!
+      : convertDrinkAmount(
+          Number.isFinite(form.drinkAmount) ? form.drinkAmount : 1,
+          form.drinkUnit,
+          unit,
+        );
     patch({ drinkUnit: unit, drinkAmount: amount });
+  }
+
+  async function openHistory() {
+    setHistoryOpen(true);
+    setHistoryConfirmClear(false);
+    setHistoryLoading(true);
+    try {
+      const days = await getDrinkHistory();
+      setHistoryDays(days);
+    } catch (err) {
+      showUpdateToast(err instanceof Error ? err.message : String(err), "error", 4800);
+      setHistoryOpen(false);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
+  async function onClearHistory() {
+    if (!historyConfirmClear) {
+      setHistoryConfirmClear(true);
+      return;
+    }
+    setHistoryClearing(true);
+    try {
+      const days = await clearDrinkHistory();
+      setHistoryDays(days);
+      setHistoryConfirmClear(false);
+      showUpdateToast("已清除历史记录", "ok", 3200);
+    } catch (err) {
+      showUpdateToast(err instanceof Error ? err.message : String(err), "error", 4800);
+    } finally {
+      setHistoryClearing(false);
+    }
   }
 
   function amountHint(unit: DrinkUnit): string {
@@ -308,6 +377,13 @@ export function Settings() {
   }
 
   const banner = pauseText(snap.pausedUntil, snap.paused);
+  const todayAmount = convertIntakeTotal(snap.glassesToday, snap.drinkUnit, form.drinkUnit);
+  const todayLabel = formatIntake(todayAmount, form.drinkUnit);
+  const todayApprox = formatIntakeApprox(
+    todayAmount,
+    form.drinkUnit,
+    counterpartUnit(form.drinkUnit),
+  );
 
   return (
     <main className="settings">
@@ -319,19 +395,28 @@ export function Settings() {
         </header>
 
         <section className="count-block" aria-label="今日饮水量">
-          <div>
-            <div className="count-num">
-              {form.drinkUnit === "ml"
-                ? String(snap.glassesToday)
-                : String(snap.glassesToday).padStart(2, "0")}
+          <div className="count-head">
+            <div>
+              <div className="count-num">
+                {form.drinkUnit === "ml"
+                  ? String(todayAmount)
+                  : String(todayAmount).padStart(2, "0")}
+              </div>
+              <div className="count-caption">
+                今日已喝 · {todayLabel}
+                {todayApprox ? `（${todayApprox}）` : ""}
+              </div>
             </div>
-            <div className="count-caption">今日已喝 · {snap.intakeLabel}</div>
+            <Button variant="outline" size="sm" onClick={() => void openHistory()}>
+              历史记录
+            </Button>
           </div>
           <p className="hint">
-            {snap.glassesToday === 0
+            {todayAmount === 0
               ? "今天还没有记录。点「喝了」才会计数。"
               : `点「喝了」会加 ${form.drinkAmount} ${form.drinkUnit === "ml" ? "毫升" : form.drinkUnit === "sip" ? "口" : "杯"}。`}
           </p>
+          <p className="hint">换算：1 杯 = 350 毫升，1 口 ≈ 80 毫升。</p>
         </section>
 
         {banner ? (
@@ -625,6 +710,80 @@ export function Settings() {
                 onClick={dismissUpdateDialog}
               >
                 稍后
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {historyOpen ? (
+        <div
+          className="update-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="history-dialog-title"
+        >
+          <button
+            type="button"
+            className="update-modal-backdrop"
+            aria-label="关闭历史记录"
+            disabled={historyClearing}
+            onClick={() => {
+              setHistoryOpen(false);
+              setHistoryConfirmClear(false);
+            }}
+          />
+          <div className="update-modal-card history-modal-card">
+            <p className="update-modal-kicker">喝水记录</p>
+            <h2 id="history-dialog-title">历史记录</h2>
+            <p className="update-modal-lede">按天查看过去的饮水量。跨天后会自动归档。</p>
+            {historyLoading ? (
+              <p className="hint">正在读取…</p>
+            ) : historyDays.length === 0 ? (
+              <p className="hint">还没有记录。从今天起点「喝了」会自动保存。</p>
+            ) : (
+              <ul className="history-list">
+                {historyDays.map((day) => (
+                  <li key={day.date} className="history-item">
+                    <div>
+                      <div className="history-date">
+                        {formatHistoryDate(day.date, day.isToday)}
+                        <span className="history-date-iso">{day.date}</span>
+                      </div>
+                      <div className="history-label">{day.label}</div>
+                      {day.convertedLabel ? (
+                        <div className="history-converted">{day.convertedLabel}</div>
+                      ) : null}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {historyConfirmClear ? (
+              <p className="hint history-confirm">
+                将清除过去的记录，今日计数会保留，且不可恢复。再点一次确认。
+              </p>
+            ) : null}
+            <div className="update-modal-actions">
+              <Button
+                variant="outline"
+                disabled={historyLoading || historyClearing || historyDays.every((d) => d.isToday)}
+                onClick={() => void onClearHistory()}
+              >
+                {historyClearing
+                  ? "清除中…"
+                  : historyConfirmClear
+                    ? "确认清除"
+                    : "清除历史"}
+              </Button>
+              <Button
+                disabled={historyClearing}
+                onClick={() => {
+                  setHistoryOpen(false);
+                  setHistoryConfirmClear(false);
+                }}
+              >
+                关闭
               </Button>
             </div>
           </div>

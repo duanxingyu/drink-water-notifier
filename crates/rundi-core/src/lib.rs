@@ -15,7 +15,12 @@ pub use schedule::{
     apply_pause, apply_snooze, clear_pause, end_of_local_day, evaluate, mark_shown, Decision,
     RuntimeState, Schedule,
 };
-pub use state::{glasses_on, load_state, record_intake, save_state, DailyCount, PersistedState};
+pub use state::{
+    clear_history, convert_daily_unit, glasses_on, load_state, merged_history, record_intake,
+    save_state, trim_history, DailyCount, DayIntake, HISTORY_RETENTION_DAYS,
+};
 pub use units::{
-    format_drink_ack, format_drink_prompt, format_intake, parse_drink_unit, DrinkUnit,
+    convert_drink_amount, convert_intake_total, format_drink_ack, format_drink_prompt,
+    format_intake, format_intake_approx, from_ml, parse_drink_unit, to_ml, DrinkUnit, ML_PER_CUP,
+    ML_PER_SIP,
 };

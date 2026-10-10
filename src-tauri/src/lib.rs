@@ -8,10 +8,11 @@ use std::time::Duration;
 
 use chrono::{DateTime, FixedOffset, Local, TimeDelta};
 use rundi_core::{
-    apply_pause, apply_snooze, clear_pause, config_file_path, end_of_local_day, evaluate,
-    format_drink_ack, format_drink_prompt, format_intake, glasses_on, load_config, load_state,
-    mark_shown, record_intake, save_config, save_state, state_file_path, weekday_code, AppConfig,
-    DailyCount, Decision, RuntimeState,
+    apply_pause, apply_snooze, clear_history, clear_pause, config_file_path, convert_daily_unit,
+    end_of_local_day, evaluate, format_drink_ack, format_drink_prompt, format_intake,
+    format_intake_approx, glasses_on, load_config, load_state, mark_shown, merged_history,
+    record_intake, save_config, save_state, state_file_path, weekday_code, AppConfig, DailyCount,
+    DayIntake, Decision, RuntimeState,
 };
 use serde::{Deserialize, Serialize};
 use tauri::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
@@ -32,6 +33,7 @@ struct Inner {
     config: AppConfig,
     runtime: RuntimeState,
     daily: DailyCount,
+    history: Vec<DayIntake>,
     config_path: std::path::PathBuf,
     state_path: std::path::PathBuf,
     force_show: bool,
@@ -122,6 +124,17 @@ struct UpdateInfo {
     body: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DrinkHistoryDay {
+    date: String,
+    amount: u32,
+    unit: String,
+    label: String,
+    converted_label: Option<String>,
+    is_today: bool,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SettingsInput {
@@ -201,18 +214,29 @@ fn load_inner() -> (Inner, bool) {
             warning = Some(format!("没能写下默认配置：{err}"));
         }
     }
-    let (runtime, daily) = match load_state(&state_path) {
-        Ok(pair) => pair,
+    let (runtime, mut daily, history) = match load_state(&state_path) {
+        Ok(triple) => triple,
         Err(err) => {
             warning = Some(format!("状态没有读出来，今日计数从 0 开始。{err}"));
-            (RuntimeState::default(), DailyCount::default())
+            (
+                RuntimeState::default(),
+                DailyCount::default(),
+                Vec::new(),
+            )
         }
     };
+    // 旧状态没有 countUnit 时，与当前配置单位对齐。
+    if daily.unit != config.drink_unit && daily.glasses == 0 {
+        daily.unit = config.drink_unit;
+    } else if daily.unit != config.drink_unit {
+        convert_daily_unit(&mut daily, config.drink_unit);
+    }
     (
         Inner {
             config,
             runtime,
             daily,
+            history,
             config_path,
             state_path,
             force_show: false,
@@ -227,7 +251,38 @@ fn load_inner() -> (Inner, bool) {
 }
 
 fn persist(guard: &Inner) -> Result<(), String> {
-    save_state(&guard.state_path, &guard.runtime, &guard.daily).map_err(|err| err.to_string())
+    save_state(
+        &guard.state_path,
+        &guard.runtime,
+        &guard.daily,
+        &guard.history,
+    )
+    .map_err(|err| err.to_string())
+}
+
+fn history_days_from(guard: &Inner) -> Vec<DrinkHistoryDay> {
+    let today = local_now().date_naive();
+    let current_unit = guard.config.drink_unit;
+    merged_history(&guard.daily, &guard.history, today, current_unit)
+        .into_iter()
+        .map(|day| {
+            let counterpart = current_unit.counterpart_for_display();
+            let converted_label = if day.unit == current_unit {
+                format_intake_approx(day.amount, day.unit, counterpart)
+            } else {
+                format_intake_approx(day.amount, day.unit, current_unit)
+                    .or_else(|| format_intake_approx(day.amount, day.unit, counterpart))
+            };
+            DrinkHistoryDay {
+                date: day.date.format("%Y-%m-%d").to_string(),
+                amount: day.amount,
+                unit: day.unit.code().to_string(),
+                label: format_intake(day.amount, day.unit),
+                converted_label,
+                is_today: day.date == today,
+            }
+        })
+        .collect()
 }
 
 /// `cargo run` / `tauri dev` 产物路径（`target/debug|release`）。
@@ -594,7 +649,12 @@ fn scheduler_loop(app: AppHandle, sync: Arc<InnerSync>) {
             guard.active = Some(payload.clone());
             let sound = guard.config.sound_enabled;
             let volume = guard.config.volume;
-            if let Err(err) = save_state(&guard.state_path, &guard.runtime, &guard.daily) {
+            if let Err(err) = save_state(
+                &guard.state_path,
+                &guard.runtime,
+                &guard.daily,
+                &guard.history,
+            ) {
                 eprintln!("润滴：保存提醒状态失败：{err}");
             }
             drop(guard);
@@ -710,11 +770,22 @@ fn save_settings(
     .map_err(|err| err.to_string())?;
     {
         let mut guard = state.lock();
-        let previous = guard.config.clone();
+        let previous_config = guard.config.clone();
+        let previous_daily = guard.daily.clone();
+        if previous_config.drink_unit != config.drink_unit {
+            convert_daily_unit(&mut guard.daily, config.drink_unit);
+        }
         guard.config = config.clone();
         if let Err(err) = save_config(&guard.config_path, &guard.config) {
-            guard.config = previous;
+            guard.config = previous_config;
+            guard.daily = previous_daily;
             return Err(err.to_string());
+        }
+        if let Err(err) = persist(&guard) {
+            guard.config = previous_config;
+            guard.daily = previous_daily;
+            let _ = save_config(&guard.config_path, &guard.config);
+            return Err(err);
         }
     }
     let warning = sync_autostart(&app, config.launch_at_login)
@@ -733,18 +804,48 @@ fn drink(app: AppHandle, state: State<AppState>) -> Result<Snapshot, String> {
     {
         let mut guard = state.lock();
         let now = local_now();
-        let previous = guard.daily.clone();
+        let previous_daily = guard.daily.clone();
+        let previous_history = guard.history.clone();
         let amount = guard.config.drink_amount;
-        record_intake(&mut guard.daily, now.date_naive(), amount);
+        let unit = guard.config.drink_unit;
+        let today = now.date_naive();
+        {
+            let Inner {
+                daily, history, ..
+            } = &mut *guard;
+            record_intake(daily, history, today, amount, unit);
+        }
         guard.active = None;
         if let Err(err) = persist(&guard) {
-            guard.daily = previous;
+            guard.daily = previous_daily;
+            guard.history = previous_history;
             return Err(err);
         }
     }
     hide_reminder(&app);
     publish(&app, &state);
     Ok(state.snapshot())
+}
+
+#[tauri::command]
+fn get_drink_history(state: State<AppState>) -> Vec<DrinkHistoryDay> {
+    let guard = state.lock();
+    history_days_from(&guard)
+}
+
+#[tauri::command]
+fn clear_drink_history(app: AppHandle, state: State<AppState>) -> Result<Vec<DrinkHistoryDay>, String> {
+    {
+        let mut guard = state.lock();
+        let previous = guard.history.clone();
+        clear_history(&mut guard.history);
+        if let Err(err) = persist(&guard) {
+            guard.history = previous;
+            return Err(err);
+        }
+    }
+    publish(&app, &state);
+    Ok(history_days_from(&state.lock()))
 }
 
 #[tauri::command]
@@ -920,6 +1021,8 @@ pub fn run() {
             active_reminder,
             save_settings,
             drink,
+            get_drink_history,
+            clear_drink_history,
             snooze,
             dismiss,
             pause_hour,

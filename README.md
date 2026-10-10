@@ -87,7 +87,7 @@ xattr -dr com.apple.quarantine /Applications/Rundi.app
 | macOS | `~/Library/Application Support/rundi/config.toml` |
 | Linux | `~/.config/rundi/config.toml` |
 
-同目录的 `state.json` 记录上次提醒时间、暂停、稍后，以及当天杯数。一般不用手改。
+同目录的 `state.json` 记录上次提醒时间、暂停、稍后、当天杯数，以及近 90 天的按日历史（设置页可查看/清除）。单位换算：1 杯 = 350 毫升，1 口 ≈ 80 毫升。
 
 ```toml
 workdays = ["Mon", "Tue", "Wed", "Thu", "Fri"]

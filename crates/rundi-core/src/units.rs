@@ -2,7 +2,13 @@
 
 use crate::config::ConfigError;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// 1 杯 ≈ 350 毫升。
+pub const ML_PER_CUP: u32 = 350;
+/// 1 口 ≈ 80 毫升。
+pub const ML_PER_SIP: u32 = 80;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum DrinkUnit {
     /// 杯
     Cup,
@@ -41,6 +47,14 @@ impl DrinkUnit {
             Self::Ml => 200,
         }
     }
+
+    /// 历史/对照展示时优先换算到的「另一种体积单位」。
+    pub fn counterpart_for_display(self) -> Self {
+        match self {
+            Self::Cup | Self::Sip => Self::Ml,
+            Self::Ml => Self::Cup,
+        }
+    }
 }
 
 pub fn parse_drink_unit(value: &str) -> Result<DrinkUnit, ConfigError> {
@@ -64,6 +78,46 @@ pub fn validate_drink_amount(unit: DrinkUnit, amount: u32) -> Result<(), ConfigE
     }
 }
 
+/// 换算到毫升。
+pub fn to_ml(amount: u32, unit: DrinkUnit) -> u32 {
+    match unit {
+        DrinkUnit::Ml => amount,
+        DrinkUnit::Cup => amount.saturating_mul(ML_PER_CUP),
+        DrinkUnit::Sip => amount.saturating_mul(ML_PER_SIP),
+    }
+}
+
+/// 从毫升换算到目标单位（四舍五入）。
+/// `min_one` 为 true 时用于「每次喝多少」，结果至少为 1（毫升则至少 10 的合法下限由调用方 clamp）。
+pub fn from_ml(ml: u32, unit: DrinkUnit) -> u32 {
+    match unit {
+        DrinkUnit::Ml => ml,
+        DrinkUnit::Cup => ((f64::from(ml) / f64::from(ML_PER_CUP)).round() as u32).max(0),
+        DrinkUnit::Sip => ((f64::from(ml) / f64::from(ML_PER_SIP)).round() as u32).max(0),
+    }
+}
+
+/// 切换单位时换算「每次喝多少」，并夹到合法范围。
+pub fn convert_drink_amount(amount: u32, from: DrinkUnit, to: DrinkUnit) -> u32 {
+    if from == to {
+        return amount;
+    }
+    let ml = to_ml(amount, from);
+    let converted = from_ml(ml, to);
+    match to {
+        DrinkUnit::Ml => converted.clamp(10, 1000),
+        DrinkUnit::Cup | DrinkUnit::Sip => converted.clamp(1, 20),
+    }
+}
+
+/// 切换单位时换算今日/历史总量（允许为 0）。
+pub fn convert_intake_total(amount: u32, from: DrinkUnit, to: DrinkUnit) -> u32 {
+    if from == to {
+        return amount;
+    }
+    from_ml(to_ml(amount, from), to)
+}
+
 /// 今日总量文案，例如 `3 杯`、`600 毫升`、`两口`。
 pub fn format_intake(amount: u32, unit: DrinkUnit) -> String {
     match unit {
@@ -76,6 +130,25 @@ pub fn format_intake(amount: u32, unit: DrinkUnit) -> String {
             n => format!("{n} 口"),
         },
     }
+}
+
+/// 换算对照文案，例如 `约 700 毫升`；同单位或换算结果为 0 时返回 None。
+pub fn format_intake_approx(amount: u32, from: DrinkUnit, to: DrinkUnit) -> Option<String> {
+    if from == to {
+        return None;
+    }
+    let converted = convert_intake_total(amount, from, to);
+    if converted == 0 && amount > 0 {
+        // 太少不足以进位时仍给出毫升对照更直观
+        if to != DrinkUnit::Ml {
+            let ml = to_ml(amount, from);
+            if ml > 0 {
+                return Some(format!("约 {ml} 毫升"));
+            }
+        }
+        return None;
+    }
+    Some(format!("约 {}", format_intake(converted, to)))
 }
 
 /// 点「喝了」后的短确认，例如「记下这一杯」。
@@ -113,5 +186,16 @@ mod tests {
         assert_eq!(parse_drink_unit("毫升").unwrap(), DrinkUnit::Ml);
         assert_eq!(parse_drink_unit("口").unwrap(), DrinkUnit::Sip);
         assert_eq!(parse_drink_unit("ml").unwrap(), DrinkUnit::Ml);
+    }
+
+    #[test]
+    fn cup_and_sip_ml_rates() {
+        assert_eq!(to_ml(1, DrinkUnit::Cup), 350);
+        assert_eq!(to_ml(1, DrinkUnit::Sip), 80);
+        assert_eq!(from_ml(350, DrinkUnit::Cup), 1);
+        assert_eq!(from_ml(80, DrinkUnit::Sip), 1);
+        assert_eq!(convert_drink_amount(1, DrinkUnit::Cup, DrinkUnit::Ml), 350);
+        assert_eq!(convert_intake_total(2, DrinkUnit::Cup, DrinkUnit::Ml), 700);
+        assert_eq!(convert_intake_total(700, DrinkUnit::Ml, DrinkUnit::Cup), 2);
     }
 }
