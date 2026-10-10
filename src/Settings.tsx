@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   checkForUpdate,
   defaultAmountFor,
   getSnapshot,
   installUpdate,
+  isTauri,
   onSnapshot,
   pauseHour,
   pauseToday,
@@ -65,6 +66,26 @@ function pauseText(iso: string | null, paused: boolean): string | null {
   return `已暂停，${clock} 继续`;
 }
 
+function clampAmount(unit: DrinkUnit, amount: number): number {
+  if (!Number.isFinite(amount)) return defaultAmountFor(unit);
+  const rounded = Math.round(amount);
+  if (unit === "ml") return Math.min(1000, Math.max(10, rounded));
+  return Math.min(20, Math.max(1, rounded));
+}
+
+function clampInt(value: number, min: number, max: number, fallback: number): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+function numberFieldValue(value: number): number | "" {
+  return Number.isFinite(value) ? value : "";
+}
+
+function parseNumberInput(raw: string): number {
+  return raw === "" ? Number.NaN : Number(raw);
+}
+
 export function Settings() {
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [form, setForm] = useState<SettingsInput | null>(null);
@@ -75,13 +96,18 @@ export function Settings() {
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [installingUpdate, setInstallingUpdate] = useState(false);
   const [updateHint, setUpdateHint] = useState<string | null>(null);
+  /** 各单位上次填过的「每次喝多少」，切换单位时不要丢回默认值。 */
+  const amountByUnit = useRef<Partial<Record<DrinkUnit, number>>>({});
 
   async function load() {
     setLoading(true);
     try {
       const next = await getSnapshot();
+      const nextForm = toForm(next);
+      amountByUnit.current[nextForm.drinkUnit] = nextForm.drinkAmount;
       setSnap(next);
-      setForm(toForm(next));
+      setForm(nextForm);
+      setSaved(false);
       setError(next.configWarning);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -91,25 +117,43 @@ export function Settings() {
   }
 
   useEffect(() => {
-    let unlisten = () => {};
+    let unlistenSnapshot = () => {};
+    let unlistenOpened = () => {};
     let stop = false;
     void (async () => {
-      unlisten = await onSnapshot((next) => {
+      unlistenSnapshot = await onSnapshot((next) => {
         if (stop) return;
         setSnap(next);
         setError(next.configWarning);
       });
+      if (isTauri()) {
+        const { listen } = await import("@tauri-apps/api/event");
+        unlistenOpened = await listen("settings-opened", () => {
+          if (!stop) void load();
+        });
+      }
       if (!stop) await load();
     })();
     return () => {
       stop = true;
-      unlisten();
+      unlistenSnapshot();
+      unlistenOpened();
     };
   }, []);
 
   function patch(partial: Partial<SettingsInput>) {
     setSaved(false);
-    setForm((current) => (current ? { ...current, ...partial } : current));
+    setForm((current) => {
+      if (!current) return current;
+      const next = { ...current, ...partial };
+      if (
+        (partial.drinkAmount !== undefined || partial.drinkUnit !== undefined) &&
+        Number.isFinite(next.drinkAmount)
+      ) {
+        amountByUnit.current[next.drinkUnit] = next.drinkAmount;
+      }
+      return next;
+    });
   }
 
   function toggleDay(code: string) {
@@ -120,9 +164,12 @@ export function Settings() {
   }
 
   function setUnit(unit: DrinkUnit) {
-    if (!form) return;
-    const amount =
-      form.drinkUnit === unit ? form.drinkAmount : defaultAmountFor(unit);
+    if (!form || form.drinkUnit === unit) return;
+    if (Number.isFinite(form.drinkAmount)) {
+      amountByUnit.current[form.drinkUnit] = form.drinkAmount;
+    }
+    const remembered = amountByUnit.current[unit];
+    const amount = Number.isFinite(remembered) ? remembered! : defaultAmountFor(unit);
     patch({ drinkUnit: unit, drinkAmount: amount });
   }
 
@@ -136,12 +183,22 @@ export function Settings() {
     if (!form || saving) return;
     setSaving(true);
     setSaved(false);
+    const payload: SettingsInput = {
+      ...form,
+      drinkAmount: clampAmount(form.drinkUnit, form.drinkAmount),
+      intervalMinutes: clampInt(form.intervalMinutes, 1, 240, 30),
+      autoDismissSeconds: clampInt(form.autoDismissSeconds, 5, 180, 20),
+      snoozeMinutes: clampInt(form.snoozeMinutes, 1, 60, 5),
+    };
     try {
-      const next = await saveSettings(form);
+      const next = await saveSettings(payload);
+      const nextForm = toForm(next);
+      amountByUnit.current[nextForm.drinkUnit] = nextForm.drinkAmount;
       setSnap(next);
-      setForm(toForm(next));
+      setForm(nextForm);
+      // 配置已写入即算保存成功；开机启动等旁路警告不否定保存结果。
       setError(next.configWarning);
-      setSaved(!next.configWarning);
+      setSaved(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -268,9 +325,10 @@ export function Settings() {
             type="number"
             min={form.drinkUnit === "ml" ? 10 : 1}
             max={form.drinkUnit === "ml" ? 1000 : 20}
-            step={form.drinkUnit === "ml" ? 10 : 1}
-            value={form.drinkAmount}
-            onChange={(event) => patch({ drinkAmount: Number(event.target.value) })}
+            step={1}
+            value={numberFieldValue(form.drinkAmount)}
+            onChange={(event) => patch({ drinkAmount: parseNumberInput(event.target.value) })}
+            onBlur={() => patch({ drinkAmount: clampAmount(form.drinkUnit, form.drinkAmount) })}
           />
           <p className="hint">{amountHint(form.drinkUnit)}</p>
         </div>
@@ -339,8 +397,10 @@ export function Settings() {
             type="number"
             min={1}
             max={240}
-            value={form.intervalMinutes}
-            onChange={(event) => patch({ intervalMinutes: Number(event.target.value) })}
+            step={1}
+            value={numberFieldValue(form.intervalMinutes)}
+            onChange={(event) => patch({ intervalMinutes: parseNumberInput(event.target.value) })}
+            onBlur={() => patch({ intervalMinutes: clampInt(form.intervalMinutes, 1, 240, 30) })}
           />
           <p className="hint">1 到 240。进入时段时先提醒一次，之后按这个间隔。</p>
         </div>
@@ -353,8 +413,14 @@ export function Settings() {
               type="number"
               min={5}
               max={180}
-              value={form.autoDismissSeconds}
-              onChange={(event) => patch({ autoDismissSeconds: Number(event.target.value) })}
+              step={1}
+              value={numberFieldValue(form.autoDismissSeconds)}
+              onChange={(event) =>
+                patch({ autoDismissSeconds: parseNumberInput(event.target.value) })
+              }
+              onBlur={() =>
+                patch({ autoDismissSeconds: clampInt(form.autoDismissSeconds, 5, 180, 20) })
+              }
             />
           </div>
           <div className="field">
@@ -364,8 +430,10 @@ export function Settings() {
               type="number"
               min={1}
               max={60}
-              value={form.snoozeMinutes}
-              onChange={(event) => patch({ snoozeMinutes: Number(event.target.value) })}
+              step={1}
+              value={numberFieldValue(form.snoozeMinutes)}
+              onChange={(event) => patch({ snoozeMinutes: parseNumberInput(event.target.value) })}
+              onBlur={() => patch({ snoozeMinutes: clampInt(form.snoozeMinutes, 1, 60, 5) })}
             />
           </div>
         </div>

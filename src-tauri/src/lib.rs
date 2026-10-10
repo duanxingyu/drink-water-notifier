@@ -289,6 +289,8 @@ fn show_settings(app: &AppHandle) {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
+        // 设置窗是隐藏而非销毁；通知前端按已保存配置重载，避免残留未保存的表单。
+        let _ = window.emit("settings-opened", ());
     }
 }
 
