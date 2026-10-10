@@ -143,22 +143,23 @@ launch_at_login = false
 
 ### 每次发版
 
-1. 同步提高版本号（必须 semver 递增）：
-   - `src-tauri/tauri.conf.json` 的 `version`
+1. 同步提高版本号（必须 semver 递增，且三者一致；Release 工作流会校验）：
+   - `src-tauri/tauri.conf.json` 的 `version`（写入 `latest.json`，决定客户端能否检出更新）
    - `src-tauri/Cargo.toml` 的 `version`
-   - 可选：根目录 `package.json` 的 `version`
+   - 根目录 `package.json` 的 `version`
 2. 提交并推送到 GitHub。
-3. 打 tag 并推送：
+3. 打 **与版本号相同** 的 tag 并推送（例如版本 `0.1.2` → tag `v0.1.2`）：
 
 ```bash
-git tag v0.1.1
-git push github v0.1.1
+git tag v0.1.2
+git push github v0.1.2
 ```
 
 4. Actions 的 **Release** 工作流会打包 Windows，以及 Ubuntu 22.04 兼容的 Linux（`.deb` / AppImage，面向麒麟等 Debian 系），创建 GitHub Release，并上传 `latest.json` 与签名文件。
 5. 已安装的客户端下次启动（或点「检查更新」）即可升级。
 
-> 注意：只有装过「带 Updater 的构建」的用户才能自动更新。更早的包需要手动装一次新安装包作为基线。
+> 注意：只有装过「带 Updater 的构建」的用户才能自动更新。更早的包需要手动装一次新安装包作为基线。  
+> 若只推了 tag、未提高 `tauri.conf.json` 版本，`latest.json` 仍是旧号，老客户端会误报「已是最新版本」。
 
 ## 系统限制
 
