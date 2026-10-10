@@ -15,6 +15,7 @@ import {
   type DrinkUnit,
   type SettingsInput,
   type Snapshot,
+  type UpdateInfo,
 } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -95,9 +96,38 @@ export function Settings() {
   const [saved, setSaved] = useState(false);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [installingUpdate, setInstallingUpdate] = useState(false);
-  const [updateHint, setUpdateHint] = useState<string | null>(null);
+  const [updateToast, setUpdateToast] = useState<{
+    text: string;
+    tone: "ok" | "error" | "progress";
+  } | null>(null);
+  const [updateDialog, setUpdateDialog] = useState<UpdateInfo | null>(null);
   /** 各单位上次填过的「每次喝多少」，切换单位时不要丢回默认值。 */
   const amountByUnit = useRef<Partial<Record<DrinkUnit, number>>>({});
+  /** 用户点过「稍后」的版本，避免同版本反复弹窗。 */
+  const dismissedUpdate = useRef<string | null>(null);
+  const updateToastTimer = useRef<number | null>(null);
+
+  function showUpdateToast(text: string, tone: "ok" | "error" | "progress", autoHideMs = 0) {
+    if (updateToastTimer.current != null) {
+      window.clearTimeout(updateToastTimer.current);
+      updateToastTimer.current = null;
+    }
+    setUpdateToast({ text, tone });
+    if (autoHideMs > 0) {
+      updateToastTimer.current = window.setTimeout(() => {
+        setUpdateToast(null);
+        updateToastTimer.current = null;
+      }, autoHideMs);
+    }
+  }
+
+  function clearUpdateToast() {
+    if (updateToastTimer.current != null) {
+      window.clearTimeout(updateToastTimer.current);
+      updateToastTimer.current = null;
+    }
+    setUpdateToast(null);
+  }
 
   async function load() {
     setLoading(true);
@@ -129,7 +159,10 @@ export function Settings() {
       if (isTauri()) {
         const { listen } = await import("@tauri-apps/api/event");
         unlistenOpened = await listen("settings-opened", () => {
-          if (!stop) void load();
+          if (stop) return;
+          // 重新打开设置时若有待更新，再弹一次（用户可点「稍后」关掉）。
+          dismissedUpdate.current = null;
+          void load();
         });
       }
       if (!stop) await load();
@@ -138,8 +171,18 @@ export function Settings() {
       stop = true;
       unlistenSnapshot();
       unlistenOpened();
+      if (updateToastTimer.current != null) {
+        window.clearTimeout(updateToastTimer.current);
+      }
     };
   }, []);
+
+  useEffect(() => {
+    const info = snap?.updateAvailable;
+    if (!info) return;
+    if (dismissedUpdate.current === info.version) return;
+    setUpdateDialog(info);
+  }, [snap?.updateAvailable]);
 
   function patch(partial: Partial<SettingsInput>) {
     setSaved(false);
@@ -206,20 +249,33 @@ export function Settings() {
     }
   }
 
+  function openUpdateDialog(info: UpdateInfo) {
+    dismissedUpdate.current = null;
+    setUpdateDialog(info);
+  }
+
+  function dismissUpdateDialog() {
+    if (updateDialog) {
+      dismissedUpdate.current = updateDialog.version;
+    }
+    setUpdateDialog(null);
+  }
+
   async function onCheckUpdate() {
     setCheckingUpdate(true);
-    setUpdateHint(null);
+    showUpdateToast("正在检查更新…", "progress");
     try {
       const info = await checkForUpdate();
       const next = await getSnapshot();
       setSnap(next);
       if (info) {
-        setUpdateHint(`发现新版本 ${info.version}`);
+        clearUpdateToast();
+        openUpdateDialog(info);
       } else {
-        setUpdateHint("已是最新版本");
+        showUpdateToast("已是最新版本", "ok", 3200);
       }
     } catch (err) {
-      setUpdateHint(err instanceof Error ? err.message : String(err));
+      showUpdateToast(err instanceof Error ? err.message : String(err), "error", 4800);
     } finally {
       setCheckingUpdate(false);
     }
@@ -227,11 +283,11 @@ export function Settings() {
 
   async function onInstallUpdate() {
     setInstallingUpdate(true);
-    setUpdateHint("正在下载并安装更新…");
+    showUpdateToast("正在下载并安装更新…", "progress");
     try {
       await installUpdate();
     } catch (err) {
-      setUpdateHint(err instanceof Error ? err.message : String(err));
+      showUpdateToast(err instanceof Error ? err.message : String(err), "error", 4800);
       setInstallingUpdate(false);
     }
   }
@@ -277,20 +333,6 @@ export function Settings() {
               : `点「喝了」会加 ${form.drinkAmount} ${form.drinkUnit === "ml" ? "毫升" : form.drinkUnit === "sip" ? "口" : "杯"}。`}
           </p>
         </section>
-
-        {snap.updateAvailable ? (
-          <div className="banner banner-update">
-            <span>发现新版本 {snap.updateAvailable.version}</span>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={installingUpdate}
-              onClick={() => void onInstallUpdate()}
-            >
-              {installingUpdate ? "安装中…" : "立即更新"}
-            </Button>
-          </div>
-        ) : null}
 
         {banner ? (
           <div className="banner">
@@ -506,10 +548,88 @@ export function Settings() {
           </div>
         </div>
 
-        {updateHint ? <p className="hint">{updateHint}</p> : null}
+        {snap.updateAvailable && !updateDialog ? (
+          <p className="hint update-inline">
+            有新版本 {snap.updateAvailable.version} ·{" "}
+            <button
+              type="button"
+              className="linkish"
+              disabled={installingUpdate}
+              onClick={() => openUpdateDialog(snap.updateAvailable!)}
+            >
+              查看更新
+            </button>
+          </p>
+        ) : null}
         <p className="path">版本 {snap.appVersion}</p>
         <p className="path">配置文件 {snap.configPath}</p>
       </div>
+
+      {updateToast ? (
+        <div
+          className={`update-toast update-toast-${updateToast.tone}`}
+          role="status"
+          aria-live="polite"
+        >
+          <span>{updateToast.text}</span>
+          {updateToast.tone !== "progress" ? (
+            <button
+              type="button"
+              className="update-toast-close"
+              aria-label="关闭提示"
+              onClick={clearUpdateToast}
+            >
+              关闭
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {updateDialog ? (
+        <div
+          className="update-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="update-dialog-title"
+        >
+          <button
+            type="button"
+            className="update-modal-backdrop"
+            aria-label="关闭更新提示"
+            disabled={installingUpdate}
+            onClick={dismissUpdateDialog}
+          />
+          <div className="update-modal-card">
+            <p className="update-modal-kicker">发现新版本</p>
+            <h2 id="update-dialog-title">润滴 {updateDialog.version}</h2>
+            <p className="update-modal-lede">
+              当前版本 {snap.appVersion}。下载安装后会自动重启应用。
+            </p>
+            {updateDialog.body ? (
+              <div className="update-modal-notes">{updateDialog.body}</div>
+            ) : null}
+            {installingUpdate ? (
+              <p className="hint update-modal-progress">正在下载并安装更新…</p>
+            ) : null}
+            <div className="update-modal-actions">
+              <Button
+                disabled={installingUpdate}
+                onClick={() => void onInstallUpdate()}
+                className="disabled:opacity-100"
+              >
+                {installingUpdate ? "安装中…" : "立即更新"}
+              </Button>
+              <Button
+                variant="outline"
+                disabled={installingUpdate}
+                onClick={dismissUpdateDialog}
+              >
+                稍后
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }
