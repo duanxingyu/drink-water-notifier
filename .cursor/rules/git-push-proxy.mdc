@@ -1,0 +1,25 @@
+---
+description: GitHub 推送失败时用本机代理重试（不写永久 git 配置）
+alwaysApply: true
+---
+
+# Git push 网络兜底
+
+本仓库 remote `github` 指向 `https://github.com/duanxingyu/drink-water-notifier.git`。
+
+直连 `github.com:443` 可能出现 `Connection was reset` / 推送失败（浏览器能开、git 不行）。此时：
+
+1. **不要**改全局或仓库级 `http.proxy` / `https.proxy`（用户不要求长期生效）。
+2. 用**单次** `-c` 走本机 VPN/代理（常见 v2rayN HTTP：`127.0.0.1:10809`）：
+
+```bash
+git -c http.proxy=http://127.0.0.1:10809 -c https.proxy=http://127.0.0.1:10809 push -u github HEAD
+```
+
+3. 若 10809 不通，先探测本机常见代理口（如 `10809` / `10808`），再用能通的口重试；可用 `ls-remote` 先验连通：
+
+```bash
+git -c http.proxy=http://127.0.0.1:10809 -c https.proxy=http://127.0.0.1:10809 ls-remote github HEAD
+```
+
+4. SSH 若未配置密钥，优先继续用 HTTPS + 上述代理，不要擅自改 remote。
