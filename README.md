@@ -60,6 +60,8 @@ npm run tauri build
 
 安装包是当前用户安装，不需要管理员。开机启动写的是当前用户的 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`，名字是 `Rundi`。
 
+NSIS（`.exe`）与 WiX（`.msi`）安装界面默认使用简体中文（`SimpChinese` / `zh-CN`）。
+
 未签名的安装包可能被 SmartScreen 拦住，选「仍要运行」即可。分发给别人之前应再做代码签名。
 
 ### macOS
