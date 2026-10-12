@@ -535,6 +535,8 @@ fn on_menu(app: &AppHandle, event: MenuEvent) {
         }
         "quit" => {
             state.shutdown();
+            // 提前释放单实例锁，避免退出后立刻再开时被当成第二实例而直接退出。
+            tauri_plugin_single_instance::destroy(app);
             app.exit(0);
             Ok(())
         }
@@ -962,6 +964,7 @@ pub fn run() {
         .plugin(
             tauri_plugin_autostart::Builder::new()
                 .app_name("Rundi")
+                .args(["--autostart"])
                 .build(),
         )
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -971,6 +974,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let (inner, first_launch) = load_inner();
+            let from_autostart = std::env::args().any(|arg| arg == "--autostart");
             let state = AppState {
                 inner: Arc::new(InnerSync {
                     mu: Mutex::new(inner),
@@ -987,7 +991,8 @@ pub fn run() {
             install_tray(app.handle(), &state)?;
             let shared = Arc::clone(&state.inner);
             app.manage(state);
-            if first_launch {
+            // 开始菜单等交互启动打开设置；开机自启（带 --autostart）只进托盘。
+            if first_launch || !from_autostart {
                 show_settings(app.handle());
             }
             let handle = app.handle().clone();
