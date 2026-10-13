@@ -79,6 +79,27 @@ pub fn glasses_on(count: &DailyCount, today: NaiveDate) -> u32 {
     }
 }
 
+/// 跨日时把旧日累计写入 history，并重置为今天的空计数。
+/// 返回是否发生了滚动（调用方可据此决定是否落盘）。
+pub fn rollover_daily(
+    count: &mut DailyCount,
+    history: &mut Vec<DayIntake>,
+    today: NaiveDate,
+    today_unit: DrinkUnit,
+) -> bool {
+    if count.date == today {
+        return false;
+    }
+    if count.glasses > 0 && count.date != DailyCount::default().date {
+        push_history(history, count.date, count.glasses, count.unit);
+    }
+    count.date = today;
+    count.glasses = 0;
+    count.unit = today_unit;
+    trim_history(history, today);
+    true
+}
+
 /// 记录一次饮水；若跨日则把昨日（有量时）写入 history。
 pub fn record_intake(
     count: &mut DailyCount,
@@ -88,14 +109,8 @@ pub fn record_intake(
     unit: DrinkUnit,
 ) -> u32 {
     let add = amount.max(1);
-    if count.date != today {
-        if count.glasses > 0 && count.date != DailyCount::default().date {
-            push_history(history, count.date, count.glasses, count.unit);
-        }
-        count.date = today;
-        count.glasses = 0;
-        count.unit = unit;
-    } else if count.unit != unit && count.glasses > 0 {
+    rollover_daily(count, history, today, unit);
+    if count.unit != unit && count.glasses > 0 {
         // 同日但配置单位已变：先把已有累计换到新单位再累加
         count.glasses = crate::units::convert_intake_total(count.glasses, count.unit, unit);
         count.unit = unit;
@@ -302,6 +317,40 @@ mod tests {
         assert_eq!(history[0].date, today);
         assert_eq!(history[0].amount, 2);
         assert_eq!(history[0].unit, DrinkUnit::Cup);
+    }
+
+    #[test]
+    fn rollover_archives_previous_day_without_new_drink() {
+        let yesterday = NaiveDate::from_ymd_opt(2026, 10, 12).unwrap();
+        let today = NaiveDate::from_ymd_opt(2026, 10, 13).unwrap();
+        let mut count = DailyCount {
+            date: yesterday,
+            glasses: 2080,
+            unit: DrinkUnit::Ml,
+        };
+        let mut history = Vec::new();
+        assert!(rollover_daily(
+            &mut count,
+            &mut history,
+            today,
+            DrinkUnit::Ml
+        ));
+        assert_eq!(count.date, today);
+        assert_eq!(count.glasses, 0);
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].date, yesterday);
+        assert_eq!(history[0].amount, 2080);
+        assert_eq!(history[0].unit, DrinkUnit::Ml);
+        assert!(!rollover_daily(
+            &mut count,
+            &mut history,
+            today,
+            DrinkUnit::Ml
+        ));
+        let merged = merged_history(&count, &history, today, DrinkUnit::Ml);
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0].date, today);
+        assert_eq!(merged[1].date, yesterday);
     }
 
     #[test]

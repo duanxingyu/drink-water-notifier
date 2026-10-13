@@ -17,7 +17,7 @@ pub use schedule::{
 };
 pub use state::{
     clear_history, convert_daily_unit, glasses_on, load_state, merged_history, record_intake,
-    save_state, trim_history, DailyCount, DayIntake, HISTORY_RETENTION_DAYS,
+    rollover_daily, save_state, trim_history, DailyCount, DayIntake, HISTORY_RETENTION_DAYS,
 };
 pub use units::{
     convert_drink_amount, convert_intake_total, format_drink_ack, format_drink_prompt,

@@ -11,8 +11,8 @@ use rundi_core::{
     apply_pause, apply_snooze, clear_history, clear_pause, config_file_path, convert_daily_unit,
     end_of_local_day, evaluate, format_drink_ack, format_drink_prompt, format_intake,
     format_intake_approx, glasses_on, load_config, load_state, mark_shown, merged_history,
-    record_intake, save_config, save_state, state_file_path, weekday_code, AppConfig, DailyCount,
-    DayIntake, Decision, RuntimeState,
+    record_intake, rollover_daily, save_config, save_state, state_file_path, weekday_code,
+    AppConfig, DailyCount, DayIntake, Decision, RuntimeState,
 };
 use serde::{Deserialize, Serialize};
 use tauri::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
@@ -214,7 +214,7 @@ fn load_inner() -> (Inner, bool) {
             warning = Some(format!("没能写下默认配置：{err}"));
         }
     }
-    let (runtime, mut daily, history) = match load_state(&state_path) {
+    let (runtime, mut daily, mut history) = match load_state(&state_path) {
         Ok(triple) => triple,
         Err(err) => {
             warning = Some(format!("状态没有读出来，今日计数从 0 开始。{err}"));
@@ -225,29 +225,41 @@ fn load_inner() -> (Inner, bool) {
             )
         }
     };
+    let today = local_now().date_naive();
+    // 跨日启动时先归档昨日，避免历史页要等今天第一次喝水才出现。
+    let mut dirty = rollover_daily(&mut daily, &mut history, today, config.drink_unit);
     // 旧状态没有 countUnit 时，与当前配置单位对齐。
     if daily.unit != config.drink_unit && daily.glasses == 0 {
         daily.unit = config.drink_unit;
     } else if daily.unit != config.drink_unit {
         convert_daily_unit(&mut daily, config.drink_unit);
+        dirty = true;
     }
-    (
-        Inner {
-            config,
-            runtime,
-            daily,
-            history,
-            config_path,
-            state_path,
-            force_show: false,
-            config_warning: warning,
-            active: None,
-            token: 0,
-            shutdown: false,
-            update_available: None,
-        },
-        first_launch,
-    )
+    let inner = Inner {
+        config,
+        runtime,
+        daily,
+        history,
+        config_path,
+        state_path,
+        force_show: false,
+        config_warning: warning,
+        active: None,
+        token: 0,
+        shutdown: false,
+        update_available: None,
+    };
+    if dirty {
+        if let Err(err) = save_state(
+            &inner.state_path,
+            &inner.runtime,
+            &inner.daily,
+            &inner.history,
+        ) {
+            eprintln!("润滴：跨日归档状态失败：{err}");
+        }
+    }
+    (inner, first_launch)
 }
 
 fn persist(guard: &Inner) -> Result<(), String> {
@@ -258,6 +270,17 @@ fn persist(guard: &Inner) -> Result<(), String> {
         &guard.history,
     )
     .map_err(|err| err.to_string())
+}
+
+/// 若已跨日，把昨日累计写入 history 并重置今日计数；有变更时落盘。
+fn ensure_daily_rolled(guard: &mut Inner) {
+    let today = local_now().date_naive();
+    let unit = guard.config.drink_unit;
+    if rollover_daily(&mut guard.daily, &mut guard.history, today, unit) {
+        if let Err(err) = persist(guard) {
+            eprintln!("润滴：跨日归档状态失败：{err}");
+        }
+    }
 }
 
 fn history_days_from(guard: &Inner) -> Vec<DrinkHistoryDay> {
@@ -622,6 +645,7 @@ fn scheduler_loop(app: AppHandle, sync: Arc<InnerSync>) {
         if guard.shutdown {
             break;
         }
+        ensure_daily_rolled(&mut guard);
         let now = local_now();
         let should_show = if guard.force_show {
             guard.force_show = false;
@@ -831,7 +855,8 @@ fn drink(app: AppHandle, state: State<AppState>) -> Result<Snapshot, String> {
 
 #[tauri::command]
 fn get_drink_history(state: State<AppState>) -> Vec<DrinkHistoryDay> {
-    let guard = state.lock();
+    let mut guard = state.lock();
+    ensure_daily_rolled(&mut guard);
     history_days_from(&guard)
 }
 
