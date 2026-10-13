@@ -10,6 +10,8 @@ import {
   convertIntakeTotal,
   counterpartUnit,
   defaultAmountFor,
+  DESK_GOAL_ML_MAX,
+  DESK_GOAL_ML_MIN,
   formatIntake,
   formatIntakeApprox,
   getDrinkHistory,
@@ -19,6 +21,9 @@ import {
   onSnapshot,
   pauseHour,
   pauseToday,
+  RECOMMENDED_DESK_GOAL_ML,
+  RECOMMENDED_HIGH_INTAKE_AMOUNT_ML,
+  RECOMMENDED_HIGH_INTAKE_INTERVAL,
   remindNow,
   resume,
   saveSettings,
@@ -64,6 +69,8 @@ function toForm(snap: Snapshot): SettingsInput {
     respectChineseHolidays: snap.respectChineseHolidays,
     drinkUnit: snap.drinkUnit,
     drinkAmount: snap.drinkAmount,
+    highIntakeMode: snap.highIntakeMode,
+    deskGoalMl: snap.deskGoalMl,
   };
 }
 
@@ -255,6 +262,27 @@ export function Settings() {
     patch({ drinkUnit: unit, drinkAmount: amount });
   }
 
+  /** 开启高摄入模式时套用内置推荐：目标 1500 ml、每次 200 ml、间隔 25 分钟。 */
+  function applyRecommendedHighIntake() {
+    amountByUnit.current.ml = RECOMMENDED_HIGH_INTAKE_AMOUNT_ML;
+    patch({
+      highIntakeMode: true,
+      deskGoalMl: RECOMMENDED_DESK_GOAL_ML,
+      drinkUnit: "ml",
+      drinkAmount: RECOMMENDED_HIGH_INTAKE_AMOUNT_ML,
+      intervalMinutes: RECOMMENDED_HIGH_INTAKE_INTERVAL,
+    });
+  }
+
+  function setHighIntakeMode(enabled: boolean) {
+    if (!form) return;
+    if (enabled) {
+      applyRecommendedHighIntake();
+      return;
+    }
+    patch({ highIntakeMode: false });
+  }
+
   async function openHistory() {
     setHistoryOpen(true);
     setHistoryConfirmClear(false);
@@ -304,6 +332,12 @@ export function Settings() {
       intervalMinutes: clampInt(form.intervalMinutes, 1, 240, 30),
       autoDismissSeconds: clampInt(form.autoDismissSeconds, 5, 180, 20),
       snoozeMinutes: clampInt(form.snoozeMinutes, 1, 60, 5),
+      deskGoalMl: clampInt(
+        form.deskGoalMl,
+        DESK_GOAL_ML_MIN,
+        DESK_GOAL_ML_MAX,
+        RECOMMENDED_DESK_GOAL_ML,
+      ),
     };
     try {
       const next = await saveSettings(payload);
@@ -390,6 +424,12 @@ export function Settings() {
     form.drinkUnit,
     counterpartUnit(form.drinkUnit),
   );
+  const intakeMlToday = convertIntakeTotal(snap.glassesToday, snap.drinkUnit, "ml");
+  const deskGoalMl = Number.isFinite(form.deskGoalMl)
+    ? form.deskGoalMl
+    : RECOMMENDED_DESK_GOAL_ML;
+  const goalProgress = deskGoalMl > 0 ? Math.min(1, intakeMlToday / deskGoalMl) : 1;
+  const goalRemaining = Math.max(0, deskGoalMl - intakeMlToday);
 
   return (
     <main className="settings">
@@ -425,12 +465,95 @@ export function Settings() {
               历史记录
             </Button>
           </div>
+          {form.highIntakeMode ? (
+            <div className="goal-track" aria-label="工位饮水目标进度">
+              <div className="goal-track-head">
+                <span>
+                  工位目标 {intakeMlToday}/{deskGoalMl} 毫升
+                </span>
+                <span>
+                  {goalRemaining === 0 ? "已达标" : `还差 ${goalRemaining} 毫升`}
+                </span>
+              </div>
+              <div className="goal-bar" role="progressbar" aria-valuenow={Math.round(goalProgress * 100)} aria-valuemin={0} aria-valuemax={100}>
+                <div className="goal-bar-fill" style={{ width: `${Math.round(goalProgress * 100)}%` }} />
+              </div>
+              <p className="hint">
+                只统计电脑前喝的水，不覆盖起床、通勤与睡前；全天量请遵医嘱另行补足。
+              </p>
+            </div>
+          ) : null}
           <p className="hint">
             {todayAmount === 0
               ? "今天还没有记录。点「喝了」才会计数。"
               : `点「喝了」会加 ${form.drinkAmount} ${form.drinkUnit === "ml" ? "毫升" : form.drinkUnit === "sip" ? "口" : "杯"}。`}
           </p>
           <p className="hint">换算：1 杯 = 350 毫升，1 口 ≈ 80 毫升。</p>
+        </section>
+
+        <section className="glass-panel glass-group" aria-label="工位高摄入">
+          <div className="row">
+            <div>
+              <Label htmlFor="high-intake">工位高摄入模式</Label>
+              <p className="hint">
+                适合需要多喝水的场景（如结石防护）。默认工位目标{" "}
+                {RECOMMENDED_DESK_GOAL_ML} 毫升，落后时会略加密提醒。
+              </p>
+            </div>
+            <Switch
+              id="high-intake"
+              checked={form.highIntakeMode}
+              onCheckedChange={(checked) => setHighIntakeMode(checked)}
+            />
+          </div>
+          {form.highIntakeMode ? (
+            <>
+              <div className="field">
+                <Label htmlFor="desk-goal">工位目标（毫升）</Label>
+                <Input
+                  id="desk-goal"
+                  type="number"
+                  min={DESK_GOAL_ML_MIN}
+                  max={DESK_GOAL_ML_MAX}
+                  step={50}
+                  className="glass-input"
+                  value={numberFieldValue(form.deskGoalMl)}
+                  onChange={(event) =>
+                    patch({ deskGoalMl: parseNumberInput(event.target.value) })
+                  }
+                  onBlur={() =>
+                    patch({
+                      deskGoalMl: clampInt(
+                        form.deskGoalMl,
+                        DESK_GOAL_ML_MIN,
+                        DESK_GOAL_ML_MAX,
+                        RECOMMENDED_DESK_GOAL_ML,
+                      ),
+                    })
+                  }
+                />
+                <p className="hint">
+                  推荐默认 {RECOMMENDED_DESK_GOAL_ML} 毫升（约全日目标的一半，仅桌前时段）。
+                </p>
+              </div>
+              <div className="field">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="glass-chip"
+                  onClick={() => applyRecommendedHighIntake()}
+                >
+                  恢复推荐设置
+                </Button>
+                <p className="hint">
+                  目标 {RECOMMENDED_DESK_GOAL_ML} ml · 每次{" "}
+                  {RECOMMENDED_HIGH_INTAKE_AMOUNT_ML} ml · 间隔{" "}
+                  {RECOMMENDED_HIGH_INTAKE_INTERVAL} 分钟。
+                </p>
+              </div>
+            </>
+          ) : null}
         </section>
 
         {banner ? (

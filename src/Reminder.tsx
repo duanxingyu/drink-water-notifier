@@ -156,6 +156,9 @@ export function Reminder() {
               <Glass dismissSeconds={payload.autoDismissSeconds} />
             </div>
             <p className="meta card-item">今日已喝 {payload.intakeLabel}</p>
+            {payload.goalLabel ? (
+              <p className="meta goal-meta card-item">{payload.goalLabel}</p>
+            ) : null}
             <div className="actions card-item">
               <Button variant="drink" size="default" onClick={() => void confirmDrink()}>
                 喝了

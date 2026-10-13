@@ -251,6 +251,38 @@ html.settings-view #root {
   font-weight: 500;
 }
 
+.goal-track {
+  display: grid;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.goal-track-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--ink-soft);
+}
+
+.goal-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(16, 150, 140, 0.12);
+  border: 1px solid rgba(16, 150, 140, 0.18);
+  overflow: hidden;
+}
+
+.goal-bar-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #2bb3a3, #168f82);
+  box-shadow: 0 0 12px rgba(22, 143, 130, 0.35);
+  transition: width 0.35s ease;
+}
+
 .history-modal-card {
   width: min(100%, 380px);
   max-height: min(78vh, 560px);

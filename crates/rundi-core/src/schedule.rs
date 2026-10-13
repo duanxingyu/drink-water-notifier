@@ -1,4 +1,6 @@
-use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, NaiveTime, TimeDelta, TimeZone, Weekday};
+use chrono::{
+    DateTime, Datelike, FixedOffset, NaiveDate, NaiveTime, TimeDelta, TimeZone, Timelike, Weekday,
+};
 
 use crate::holiday::china_day_override;
 
@@ -60,6 +62,29 @@ impl Schedule {
 
     pub fn interval_minutes(&self) -> u32 {
         u32::try_from(self.interval.num_minutes().max(0)).unwrap_or(u32::MAX)
+    }
+
+    /// 用指定间隔（分钟）克隆一份日程，供高摄入追赶调度临时缩短间隔。
+    pub fn with_interval_minutes(&self, minutes: u32) -> Self {
+        let mut cloned = self.clone();
+        cloned.interval = TimeDelta::minutes(i64::from(minutes.max(1)));
+        cloned
+    }
+
+    pub fn is_active_at(&self, now: DateTime<FixedOffset>) -> bool {
+        in_window(now, self)
+    }
+
+    /// 当日时间窗已流逝比例；不在窗内时返回 `None`。
+    pub fn window_progress(&self, now: DateTime<FixedOffset>) -> Option<f64> {
+        if !in_window(now, self) {
+            return None;
+        }
+        let start = f64::from(self.start.num_seconds_from_midnight());
+        let end = f64::from(self.end.num_seconds_from_midnight());
+        let current = f64::from(now.time().num_seconds_from_midnight());
+        let span = (end - start).max(1.0);
+        Some(((current - start) / span).clamp(0.0, 1.0))
     }
 }
 

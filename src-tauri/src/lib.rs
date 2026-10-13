@@ -10,9 +10,10 @@ use chrono::{DateTime, FixedOffset, Local, TimeDelta};
 use rundi_core::{
     apply_pause, apply_snooze, clear_history, clear_pause, config_file_path, convert_daily_unit,
     end_of_local_day, evaluate, format_drink_ack, format_drink_prompt, format_intake,
-    format_intake_approx, glasses_on, load_config, load_state, mark_shown, merged_history,
-    record_intake, rollover_daily, save_config, save_state, state_file_path, weekday_code,
-    AppConfig, DailyCount, DayIntake, Decision, RuntimeState,
+    format_intake_approx, glasses_on, goal_progress, goal_remaining_ml, intake_ml, load_config,
+    load_state, mark_shown, merged_history, paced_interval_minutes, record_intake, rollover_daily,
+    save_config, save_state, state_file_path, weekday_code, AppConfig, DailyCount, DayIntake,
+    Decision, RuntimeState, Schedule,
 };
 use serde::{Deserialize, Serialize};
 use tauri::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
@@ -89,6 +90,10 @@ struct ReminderPayload {
     intake_label: String,
     drink_prompt: String,
     drink_ack: String,
+    high_intake_mode: bool,
+    desk_goal_ml: u32,
+    intake_ml_today: u32,
+    goal_label: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -106,6 +111,11 @@ struct Snapshot {
     respect_chinese_holidays: bool,
     drink_unit: String,
     drink_amount: u32,
+    high_intake_mode: bool,
+    desk_goal_ml: u32,
+    intake_ml_today: u32,
+    goal_remaining_ml: u32,
+    goal_progress: f32,
     glasses_today: u32,
     intake_label: String,
     unit_label: String,
@@ -150,16 +160,42 @@ struct SettingsInput {
     respect_chinese_holidays: bool,
     drink_unit: String,
     drink_amount: u32,
+    high_intake_mode: bool,
+    desk_goal_ml: u32,
 }
 
 fn local_now() -> DateTime<FixedOffset> {
     Local::now().fixed_offset()
 }
 
+fn goal_label_for(intake_ml_today: u32, desk_goal_ml: u32, high_intake: bool) -> Option<String> {
+    if !high_intake {
+        return None;
+    }
+    Some(format!(
+        "工位目标 {intake_ml_today}/{desk_goal_ml} 毫升"
+    ))
+}
+
+fn active_schedule(guard: &Inner, now: DateTime<FixedOffset>) -> Schedule {
+    let glasses_today = glasses_on(&guard.daily, now.date_naive());
+    let today_ml = intake_ml(glasses_today, guard.config.drink_unit);
+    let paced = paced_interval_minutes(
+        guard.config.schedule.interval_minutes(),
+        guard.config.high_intake_mode,
+        guard.config.desk_goal_ml,
+        today_ml,
+        now,
+        &guard.config.schedule,
+    );
+    guard.config.schedule.with_interval_minutes(paced)
+}
+
 fn snapshot_from(guard: &Inner) -> Snapshot {
     let now = local_now();
     let paused_until = guard.runtime.paused_until.filter(|until| now < *until);
     let glasses_today = glasses_on(&guard.daily, now.date_naive());
+    let intake_ml_today = intake_ml(glasses_today, guard.config.drink_unit);
     Snapshot {
         workdays: guard
             .config
@@ -181,6 +217,11 @@ fn snapshot_from(guard: &Inner) -> Snapshot {
         respect_chinese_holidays: guard.config.schedule.respect_chinese_holidays,
         drink_unit: guard.config.drink_unit.code().to_string(),
         drink_amount: guard.config.drink_amount,
+        high_intake_mode: guard.config.high_intake_mode,
+        desk_goal_ml: guard.config.desk_goal_ml,
+        intake_ml_today,
+        goal_remaining_ml: goal_remaining_ml(intake_ml_today, guard.config.desk_goal_ml),
+        goal_progress: goal_progress(intake_ml_today, guard.config.desk_goal_ml),
         glasses_today,
         intake_label: format_intake(glasses_today, guard.config.drink_unit),
         unit_label: guard.config.drink_unit.label().to_string(),
@@ -705,20 +746,19 @@ fn scheduler_loop(app: AppHandle, sync: Arc<InnerSync>) {
         }
         ensure_daily_rolled(&mut guard);
         let now = local_now();
+        let schedule = active_schedule(&guard, now);
         let should_show = if guard.force_show {
             guard.force_show = false;
             true
         } else {
-            matches!(
-                evaluate(now, &guard.config.schedule, &guard.runtime),
-                Decision::Show
-            )
+            matches!(evaluate(now, &schedule, &guard.runtime), Decision::Show)
         };
 
         if should_show {
             mark_shown(&mut guard.runtime, now);
             guard.token = guard.token.saturating_add(1);
             let glasses_today = glasses_on(&guard.daily, now.date_naive());
+            let intake_ml_today = intake_ml(glasses_today, guard.config.drink_unit);
             let payload = ReminderPayload {
                 token: guard.token,
                 auto_dismiss_seconds: guard.config.auto_dismiss_seconds,
@@ -729,6 +769,14 @@ fn scheduler_loop(app: AppHandle, sync: Arc<InnerSync>) {
                 intake_label: format_intake(glasses_today, guard.config.drink_unit),
                 drink_prompt: format_drink_prompt(guard.config.drink_unit).to_string(),
                 drink_ack: format_drink_ack(guard.config.drink_unit).to_string(),
+                high_intake_mode: guard.config.high_intake_mode,
+                desk_goal_ml: guard.config.desk_goal_ml,
+                intake_ml_today,
+                goal_label: goal_label_for(
+                    intake_ml_today,
+                    guard.config.desk_goal_ml,
+                    guard.config.high_intake_mode,
+                ),
             };
             guard.active = Some(payload.clone());
             let sound = guard.config.sound_enabled;
@@ -750,7 +798,7 @@ fn scheduler_loop(app: AppHandle, sync: Arc<InnerSync>) {
             continue;
         }
 
-        let target = match evaluate(now, &guard.config.schedule, &guard.runtime) {
+        let target = match evaluate(now, &schedule, &guard.runtime) {
             Decision::WaitUntil(target) => target,
             Decision::Show => now + TimeDelta::milliseconds(400),
         };
@@ -804,7 +852,7 @@ fn save_settings(
     state: State<AppState>,
     input: SettingsInput,
 ) -> Result<Snapshot, String> {
-    let config = AppConfig::try_from_parts(
+    let mut config = AppConfig::try_from_parts(
         &input.workdays,
         &input.start,
         &input.end,
@@ -819,6 +867,9 @@ fn save_settings(
         input.drink_amount,
     )
     .map_err(|err| err.to_string())?;
+    config
+        .set_high_intake(input.high_intake_mode, input.desk_goal_ml)
+        .map_err(|err| err.to_string())?;
     {
         let mut guard = state.lock();
         let previous_config = guard.config.clone();

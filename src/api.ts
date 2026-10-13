@@ -27,6 +27,11 @@ export type Snapshot = {
   respectChineseHolidays: boolean;
   drinkUnit: DrinkUnit;
   drinkAmount: number;
+  highIntakeMode: boolean;
+  deskGoalMl: number;
+  intakeMlToday: number;
+  goalRemainingMl: number;
+  goalProgress: number;
   glassesToday: number;
   intakeLabel: string;
   unitLabel: string;
@@ -48,6 +53,10 @@ export type ReminderPayload = {
   intakeLabel: string;
   drinkPrompt: string;
   drinkAck: string;
+  highIntakeMode: boolean;
+  deskGoalMl: number;
+  intakeMlToday: number;
+  goalLabel: string | null;
 };
 
 export type SettingsInput = {
@@ -63,12 +72,21 @@ export type SettingsInput = {
   respectChineseHolidays: boolean;
   drinkUnit: DrinkUnit;
   drinkAmount: number;
+  highIntakeMode: boolean;
+  deskGoalMl: number;
 };
 
 /** 1 杯 ≈ 350 毫升 */
 export const ML_PER_CUP = 350;
 /** 1 口 ≈ 80 毫升 */
 export const ML_PER_SIP = 80;
+
+/** 工位时段推荐目标（毫升），与后端默认值一致 */
+export const RECOMMENDED_DESK_GOAL_ML = 1500;
+export const RECOMMENDED_HIGH_INTAKE_INTERVAL = 25;
+export const RECOMMENDED_HIGH_INTAKE_AMOUNT_ML = 200;
+export const DESK_GOAL_ML_MIN = 500;
+export const DESK_GOAL_ML_MAX = 4000;
 
 export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -151,6 +169,11 @@ const preview: Snapshot = {
   respectChineseHolidays: true,
   drinkUnit: "cup",
   drinkAmount: 1,
+  highIntakeMode: false,
+  deskGoalMl: RECOMMENDED_DESK_GOAL_ML,
+  intakeMlToday: 1050,
+  goalRemainingMl: 450,
+  goalProgress: 1050 / RECOMMENDED_DESK_GOAL_ML,
   glassesToday: 3,
   intakeLabel: "3 杯",
   unitLabel: "杯",
@@ -257,10 +280,17 @@ export async function saveSettings(input: SettingsInput): Promise<Snapshot> {
         input.drinkUnit,
       );
     }
+    const intakeMlToday = toMl(memory.glassesToday, input.drinkUnit);
     memory = {
       ...memory,
       ...input,
       glassesToday: memory.glassesToday,
+      intakeMlToday,
+      goalRemainingMl: Math.max(0, input.deskGoalMl - intakeMlToday),
+      goalProgress:
+        input.deskGoalMl > 0
+          ? Math.min(1, intakeMlToday / input.deskGoalMl)
+          : 1,
       paused: memory.paused,
       pausedUntil: memory.pausedUntil,
       configWarning: null,
@@ -276,6 +306,12 @@ export async function saveSettings(input: SettingsInput): Promise<Snapshot> {
 export async function drink(): Promise<Snapshot> {
   if (!isTauri()) {
     memory.glassesToday += memory.drinkAmount;
+    memory.intakeMlToday = toMl(memory.glassesToday, memory.drinkUnit);
+    memory.goalRemainingMl = Math.max(0, memory.deskGoalMl - memory.intakeMlToday);
+    memory.goalProgress =
+      memory.deskGoalMl > 0
+        ? Math.min(1, memory.intakeMlToday / memory.deskGoalMl)
+        : 1;
     refreshPreviewLabels();
     refreshPreviewHistoryToday();
     publish();
@@ -376,6 +412,7 @@ export async function onReminder(cb: (payload: ReminderPayload) => void): Promis
 }
 
 export function previewReminder(): ReminderPayload {
+  const intakeMlToday = toMl(memory.glassesToday, memory.drinkUnit);
   return {
     token: 1,
     autoDismissSeconds: memory.autoDismissSeconds,
@@ -396,5 +433,11 @@ export function previewReminder(): ReminderPayload {
         : memory.drinkUnit === "ml"
           ? "记下这些水"
           : "记下这一杯",
+    highIntakeMode: memory.highIntakeMode,
+    deskGoalMl: memory.deskGoalMl,
+    intakeMlToday,
+    goalLabel: memory.highIntakeMode
+      ? `工位目标 ${intakeMlToday}/${memory.deskGoalMl} 毫升`
+      : null,
   };
 }

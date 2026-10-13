@@ -2,6 +2,7 @@
 //! 不依赖任何界面框架，方便在 Linux CI 上单测。
 
 mod config;
+mod goal;
 mod holiday;
 mod schedule;
 mod state;
@@ -9,7 +10,12 @@ mod units;
 
 pub use config::{
     app_config_dir, config_file_path, load_config, save_config, state_file_path, weekday_code,
-    AppConfig, ConfigError,
+    AppConfig, ConfigError, DESK_GOAL_ML_MAX, DESK_GOAL_ML_MIN, RECOMMENDED_DESK_GOAL_ML,
+    RECOMMENDED_HIGH_INTAKE_AMOUNT_ML, RECOMMENDED_HIGH_INTAKE_INTERVAL_MINUTES,
+};
+pub use goal::{
+    expected_desk_intake_ml, goal_progress, goal_remaining_ml, intake_ml, paced_interval_minutes,
+    validate_desk_goal_ml,
 };
 pub use schedule::{
     apply_pause, apply_snooze, clear_pause, end_of_local_day, evaluate, mark_shown, Decision,

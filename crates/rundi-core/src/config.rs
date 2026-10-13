@@ -6,6 +6,15 @@ use chrono::{NaiveTime, Timelike, Weekday};
 use crate::schedule::Schedule;
 use crate::units::{parse_drink_unit, validate_drink_amount, DrinkUnit};
 
+/// 工位时段推荐目标（毫升）。按常见全日 2.5–3 L 中「在桌前的一半左右」估算。
+pub const RECOMMENDED_DESK_GOAL_ML: u32 = 1500;
+/// 高摄入模式推荐提醒间隔（分钟）。
+pub const RECOMMENDED_HIGH_INTAKE_INTERVAL_MINUTES: u32 = 25;
+/// 高摄入模式推荐每次记录量（毫升）。
+pub const RECOMMENDED_HIGH_INTAKE_AMOUNT_ML: u32 = 200;
+pub const DESK_GOAL_ML_MIN: u32 = 500;
+pub const DESK_GOAL_ML_MAX: u32 = 4000;
+
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
     #[error("提醒间隔须在 1 到 240 分钟之间")]
@@ -28,6 +37,8 @@ pub enum ConfigError {
     DismissOutOfRange,
     #[error("稍后提醒须在 1 到 60 分钟之间")]
     SnoozeOutOfRange,
+    #[error("工位目标须在 500 到 4000 毫升之间")]
+    DeskGoalOutOfRange,
     #[error("{0}")]
     Io(String),
     #[error("配置格式不正确：{0}")]
@@ -44,6 +55,10 @@ pub struct AppConfig {
     pub launch_at_login: bool,
     pub drink_unit: DrinkUnit,
     pub drink_amount: u32,
+    /// 工位高摄入模式：显示目标进度，并在落后时缩短提醒间隔。
+    pub high_intake_mode: bool,
+    /// 电脑前建议喝水量（毫升）。默认即为推荐值 1500。
+    pub desk_goal_ml: u32,
 }
 
 impl Default for AppConfig {
@@ -57,6 +72,8 @@ impl Default for AppConfig {
             launch_at_login: false,
             drink_unit: DrinkUnit::Cup,
             drink_amount: 1,
+            high_intake_mode: false,
+            desk_goal_ml: RECOMMENDED_DESK_GOAL_ML,
         }
     }
 }
@@ -107,7 +124,22 @@ impl AppConfig {
             launch_at_login,
             drink_unit,
             drink_amount,
+            high_intake_mode: false,
+            desk_goal_ml: RECOMMENDED_DESK_GOAL_ML,
         })
+    }
+
+    pub fn set_high_intake(
+        &mut self,
+        high_intake_mode: bool,
+        desk_goal_ml: u32,
+    ) -> Result<(), ConfigError> {
+        if !(DESK_GOAL_ML_MIN..=DESK_GOAL_ML_MAX).contains(&desk_goal_ml) {
+            return Err(ConfigError::DeskGoalOutOfRange);
+        }
+        self.high_intake_mode = high_intake_mode;
+        self.desk_goal_ml = desk_goal_ml;
+        Ok(())
     }
 }
 
@@ -137,6 +169,10 @@ struct ConfigFile {
     drink_unit: String,
     #[serde(default = "default_drink_amount")]
     drink_amount: u32,
+    #[serde(default = "default_high_intake")]
+    high_intake_mode: bool,
+    #[serde(default = "default_desk_goal_ml")]
+    desk_goal_ml: u32,
 }
 
 fn default_workdays() -> Vec<String> {
@@ -184,6 +220,12 @@ fn default_drink_unit() -> String {
 fn default_drink_amount() -> u32 {
     1
 }
+fn default_high_intake() -> bool {
+    false
+}
+fn default_desk_goal_ml() -> u32 {
+    RECOMMENDED_DESK_GOAL_ML
+}
 
 impl Default for ConfigFile {
     fn default() -> Self {
@@ -207,13 +249,15 @@ impl From<&AppConfig> for ConfigFile {
             respect_chinese_holidays: config.schedule.respect_chinese_holidays,
             drink_unit: config.drink_unit.code().to_string(),
             drink_amount: config.drink_amount,
+            high_intake_mode: config.high_intake_mode,
+            desk_goal_ml: config.desk_goal_ml,
         }
     }
 }
 
 impl ConfigFile {
     fn into_app(self) -> Result<AppConfig, ConfigError> {
-        AppConfig::try_from_parts(
+        let mut config = AppConfig::try_from_parts(
             &self.workdays,
             &self.start,
             &self.end,
@@ -226,7 +270,9 @@ impl ConfigFile {
             self.respect_chinese_holidays,
             &self.drink_unit,
             self.drink_amount,
-        )
+        )?;
+        config.set_high_intake(self.high_intake_mode, self.desk_goal_ml)?;
+        Ok(config)
     }
 }
 
@@ -376,6 +422,25 @@ mod tests {
         assert!(config.schedule.respect_chinese_holidays);
         assert_eq!(config.drink_unit, crate::units::DrinkUnit::Cup);
         assert_eq!(config.drink_amount, 1);
+        assert!(!config.high_intake_mode);
+        assert_eq!(config.desk_goal_ml, RECOMMENDED_DESK_GOAL_ML);
+    }
+
+    #[test]
+    fn high_intake_roundtrip_and_bounds() {
+        let path = temp_path("high-intake");
+        let mut config = AppConfig::default();
+        config
+            .set_high_intake(true, RECOMMENDED_DESK_GOAL_ML)
+            .unwrap();
+        save_config(&path, &config).unwrap();
+        let loaded = load_config(&path).unwrap();
+        assert!(loaded.high_intake_mode);
+        assert_eq!(loaded.desk_goal_ml, 1500);
+        assert!(matches!(
+            AppConfig::default().set_high_intake(true, 100),
+            Err(ConfigError::DeskGoalOutOfRange)
+        ));
     }
 
     #[test]

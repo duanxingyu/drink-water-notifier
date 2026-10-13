@@ -306,6 +306,13 @@ html.preview body {
   margin-bottom: 10px;
 }
 
+.goal-meta {
+  margin-top: -6px;
+  margin-bottom: 8px;
+  color: #3d7a72;
+  font-weight: 550;
+}
+
 .actions {
   display: grid;
   gap: 6px;
