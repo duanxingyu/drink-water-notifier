@@ -36,5 +36,6 @@ export default defineConfig({
     target: "es2021",
     minify: process.env.TAURI_ENV_DEBUG ? false : "esbuild",
     sourcemap: !!process.env.TAURI_ENV_DEBUG,
+    cssCodeSplit: true,
   },
 });

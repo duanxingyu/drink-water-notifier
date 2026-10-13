@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 
+import "@/fonts.css";
+import "@/settings.css";
+
 import {
   checkForUpdate,
   clearDrinkHistory,
@@ -364,13 +367,16 @@ export function Settings() {
   if (loading || !form || !snap) {
     return (
       <main className="settings">
+        <div className="settings-atmosphere" aria-hidden="true" />
         <div className="settings-inner">
-          <p>{error ? error : "正在读取设置…"}</p>
-          {error ? (
-            <Button variant="outline" onClick={() => void load()}>
-              重试
-            </Button>
-          ) : null}
+          <div className="glass-panel glass-panel-compact">
+            <p>{error ? error : "正在读取设置…"}</p>
+            {error ? (
+              <Button variant="outline" onClick={() => void load()}>
+                重试
+              </Button>
+            ) : null}
+          </div>
         </div>
       </main>
     );
@@ -387,14 +393,17 @@ export function Settings() {
 
   return (
     <main className="settings">
+      <div className="settings-atmosphere" aria-hidden="true" />
       <div className="settings-inner">
-        <header>
+        <header className="glass-panel glass-hero">
           <p className="kicker">RUNDI</p>
           <h1>润滴</h1>
-          <p className="lede">工作日里，到点就轻轻提醒你喝水。关掉这个窗口后，它还在托盘里。提醒默认在右下角，可拖到别处。</p>
+          <p className="lede">
+            工作日里，到点就轻轻提醒你喝水。关掉这个窗口后，它还在托盘里。提醒默认在右下角，可拖到别处。
+          </p>
         </header>
 
-        <section className="count-block" aria-label="今日饮水量">
+        <section className="glass-panel count-block" aria-label="今日饮水量">
           <div className="count-head">
             <div>
               <div className="count-num">
@@ -407,7 +416,12 @@ export function Settings() {
                 {todayApprox ? `（${todayApprox}）` : ""}
               </div>
             </div>
-            <Button variant="outline" size="sm" onClick={() => void openHistory()}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="glass-chip"
+              onClick={() => void openHistory()}
+            >
               历史记录
             </Button>
           </div>
@@ -420,234 +434,265 @@ export function Settings() {
         </section>
 
         {banner ? (
-          <div className="banner">
+          <div className="banner glass-panel glass-panel-compact">
             <span>{banner}</span>
-            <Button variant="outline" size="sm" onClick={() => void resume().then(setSnap)}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="glass-chip"
+              onClick={() => void resume().then(setSnap)}
+            >
               继续提醒
             </Button>
           </div>
         ) : null}
 
-        <section className="field">
-          <Label>计量单位</Label>
-          <div className="units" role="group" aria-label="计量单位">
-            {UNITS.map(([code, label]) => (
-              <button
-                key={code}
-                type="button"
-                className={form.drinkUnit === code ? "unit on" : "unit"}
-                aria-pressed={form.drinkUnit === code}
-                onClick={() => setUnit(code)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </section>
-
-        <div className="field">
-          <Label htmlFor="amount">每次喝多少（{form.drinkUnit === "ml" ? "毫升" : form.drinkUnit === "sip" ? "口" : "杯"}）</Label>
-          <Input
-            id="amount"
-            type="number"
-            min={form.drinkUnit === "ml" ? 10 : 1}
-            max={form.drinkUnit === "ml" ? 1000 : 20}
-            step={1}
-            value={numberFieldValue(form.drinkAmount)}
-            onChange={(event) => patch({ drinkAmount: parseNumberInput(event.target.value) })}
-            onBlur={() => patch({ drinkAmount: clampAmount(form.drinkUnit, form.drinkAmount) })}
-          />
-          <p className="hint">{amountHint(form.drinkUnit)}</p>
-        </div>
-
-        <section className="field">
-          <Label>工作日</Label>
-          <div className="days" role="group" aria-label="工作日">
-            {DAYS.map(([code, label]) => (
-              <button
-                key={code}
-                type="button"
-                className={form.workdays.includes(code) ? "day on" : "day"}
-                aria-pressed={form.workdays.includes(code)}
-                onClick={() => toggleDay(code)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </section>
-
-        <div className="switch-row">
-          <div>
-            <Label htmlFor="cn-holiday">遵循中国节假日</Label>
-            <p className="hint">法定放假不提醒；调休补班日会提醒，即使那天是周末。</p>
-          </div>
-          <Switch
-            id="cn-holiday"
-            checked={form.respectChineseHolidays}
-            onCheckedChange={(checked) => patch({ respectChineseHolidays: checked })}
-          />
-        </div>
-
-        <div className="row">
+        <section className="glass-panel glass-group">
           <div className="field">
-            <Label htmlFor="start">开始</Label>
-            <Input
-              id="start"
-              type="text"
-              inputMode="numeric"
-              placeholder="09:30"
-              spellCheck={false}
-              value={form.start}
-              onChange={(event) => patch({ start: event.target.value })}
-            />
+            <Label>计量单位</Label>
+            <div className="units" role="group" aria-label="计量单位">
+              {UNITS.map(([code, label]) => (
+                <button
+                  key={code}
+                  type="button"
+                  className={form.drinkUnit === code ? "unit on" : "unit"}
+                  aria-pressed={form.drinkUnit === code}
+                  onClick={() => setUnit(code)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
-          <div className="field">
-            <Label htmlFor="end">结束</Label>
-            <Input
-              id="end"
-              type="text"
-              inputMode="numeric"
-              placeholder="18:30"
-              spellCheck={false}
-              value={form.end}
-              onChange={(event) => patch({ end: event.target.value })}
-            />
-          </div>
-        </div>
-        <p className="hint">只在开始到结束之间提醒。结束那一刻不再弹出。</p>
 
-        <div className="field">
-          <Label htmlFor="interval">间隔（分钟）</Label>
-          <Input
-            id="interval"
-            type="number"
-            min={1}
-            max={240}
-            step={1}
-            value={numberFieldValue(form.intervalMinutes)}
-            onChange={(event) => patch({ intervalMinutes: parseNumberInput(event.target.value) })}
-            onBlur={() => patch({ intervalMinutes: clampInt(form.intervalMinutes, 1, 240, 30) })}
-          />
-          <p className="hint">1 到 240。进入时段时先提醒一次，之后按这个间隔。</p>
-        </div>
-
-        <div className="row">
           <div className="field">
-            <Label htmlFor="dismiss">自动关闭（秒）</Label>
+            <Label htmlFor="amount">
+              每次喝多少（
+              {form.drinkUnit === "ml" ? "毫升" : form.drinkUnit === "sip" ? "口" : "杯"}）
+            </Label>
             <Input
-              id="dismiss"
+              id="amount"
               type="number"
-              min={5}
-              max={180}
+              min={form.drinkUnit === "ml" ? 10 : 1}
+              max={form.drinkUnit === "ml" ? 1000 : 20}
               step={1}
-              value={numberFieldValue(form.autoDismissSeconds)}
-              onChange={(event) =>
-                patch({ autoDismissSeconds: parseNumberInput(event.target.value) })
-              }
-              onBlur={() =>
-                patch({ autoDismissSeconds: clampInt(form.autoDismissSeconds, 5, 180, 20) })
-              }
+              className="glass-input"
+              value={numberFieldValue(form.drinkAmount)}
+              onChange={(event) => patch({ drinkAmount: parseNumberInput(event.target.value) })}
+              onBlur={() => patch({ drinkAmount: clampAmount(form.drinkUnit, form.drinkAmount) })}
+            />
+            <p className="hint">{amountHint(form.drinkUnit)}</p>
+          </div>
+
+          <div className="field">
+            <Label>工作日</Label>
+            <div className="days" role="group" aria-label="工作日">
+              {DAYS.map(([code, label]) => (
+                <button
+                  key={code}
+                  type="button"
+                  className={form.workdays.includes(code) ? "day on" : "day"}
+                  aria-pressed={form.workdays.includes(code)}
+                  onClick={() => toggleDay(code)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="switch-row">
+            <div>
+              <Label htmlFor="cn-holiday">遵循中国节假日</Label>
+              <p className="hint">法定放假不提醒；调休补班日会提醒，即使那天是周末。</p>
+            </div>
+            <Switch
+              id="cn-holiday"
+              checked={form.respectChineseHolidays}
+              onCheckedChange={(checked) => patch({ respectChineseHolidays: checked })}
             />
           </div>
+        </section>
+
+        <section className="glass-panel glass-group">
+          <div className="row">
+            <div className="field">
+              <Label htmlFor="start">开始</Label>
+              <Input
+                id="start"
+                type="text"
+                inputMode="numeric"
+                placeholder="09:30"
+                spellCheck={false}
+                className="glass-input"
+                value={form.start}
+                onChange={(event) => patch({ start: event.target.value })}
+              />
+            </div>
+            <div className="field">
+              <Label htmlFor="end">结束</Label>
+              <Input
+                id="end"
+                type="text"
+                inputMode="numeric"
+                placeholder="18:30"
+                spellCheck={false}
+                className="glass-input"
+                value={form.end}
+                onChange={(event) => patch({ end: event.target.value })}
+              />
+            </div>
+          </div>
+          <p className="hint">只在开始到结束之间提醒。结束那一刻不再弹出。</p>
+
           <div className="field">
-            <Label htmlFor="snooze">稍后提醒（分钟）</Label>
+            <Label htmlFor="interval">间隔（分钟）</Label>
             <Input
-              id="snooze"
+              id="interval"
               type="number"
               min={1}
-              max={60}
+              max={240}
               step={1}
-              value={numberFieldValue(form.snoozeMinutes)}
-              onChange={(event) => patch({ snoozeMinutes: parseNumberInput(event.target.value) })}
-              onBlur={() => patch({ snoozeMinutes: clampInt(form.snoozeMinutes, 1, 60, 5) })}
+              className="glass-input"
+              value={numberFieldValue(form.intervalMinutes)}
+              onChange={(event) => patch({ intervalMinutes: parseNumberInput(event.target.value) })}
+              onBlur={() => patch({ intervalMinutes: clampInt(form.intervalMinutes, 1, 240, 30) })}
             />
+            <p className="hint">1 到 240。进入时段时先提醒一次，之后按这个间隔。</p>
           </div>
-        </div>
 
-        <section className="field">
-          <div className="switch-row">
-            <Label htmlFor="sound">提示音</Label>
-            <Switch
-              id="sound"
-              checked={form.soundEnabled}
-              onCheckedChange={(checked) => patch({ soundEnabled: checked })}
-            />
+          <div className="row">
+            <div className="field">
+              <Label htmlFor="dismiss">自动关闭（秒）</Label>
+              <Input
+                id="dismiss"
+                type="number"
+                min={5}
+                max={180}
+                step={1}
+                className="glass-input"
+                value={numberFieldValue(form.autoDismissSeconds)}
+                onChange={(event) =>
+                  patch({ autoDismissSeconds: parseNumberInput(event.target.value) })
+                }
+                onBlur={() =>
+                  patch({ autoDismissSeconds: clampInt(form.autoDismissSeconds, 5, 180, 20) })
+                }
+              />
+            </div>
+            <div className="field">
+              <Label htmlFor="snooze">稍后提醒（分钟）</Label>
+              <Input
+                id="snooze"
+                type="number"
+                min={1}
+                max={60}
+                step={1}
+                className="glass-input"
+                value={numberFieldValue(form.snoozeMinutes)}
+                onChange={(event) => patch({ snoozeMinutes: parseNumberInput(event.target.value) })}
+                onBlur={() => patch({ snoozeMinutes: clampInt(form.snoozeMinutes, 1, 60, 5) })}
+              />
+            </div>
           </div>
-          <Label htmlFor="volume">音量 {Math.round(form.volume * 100)}</Label>
-          <Slider
-            id="volume"
-            min={0}
-            max={100}
-            step={1}
-            value={[Math.round(form.volume * 100)]}
-            onValueChange={(value) => patch({ volume: (value[0] ?? 0) / 100 })}
-            disabled={!form.soundEnabled}
-            aria-label="音量"
-          />
-          <p className="hint">提醒出现时播放一声自己生成的水滴声。</p>
         </section>
 
-        <div className="switch-row">
-          <div>
-            <Label htmlFor="login">开机时启动</Label>
-            <p className="hint">
-              登录后在后台运行。须在已安装的 Rundi 里打开并点「保存设置」；开发版不会改系统开机项，以免把安装版注册表冲掉。
-            </p>
+        <section className="glass-panel glass-group">
+          <div className="field">
+            <div className="switch-row">
+              <Label htmlFor="sound">提示音</Label>
+              <Switch
+                id="sound"
+                checked={form.soundEnabled}
+                onCheckedChange={(checked) => patch({ soundEnabled: checked })}
+              />
+            </div>
+            <Label htmlFor="volume">音量 {Math.round(form.volume * 100)}</Label>
+            <Slider
+              id="volume"
+              min={0}
+              max={100}
+              step={1}
+              value={[Math.round(form.volume * 100)]}
+              onValueChange={(value) => patch({ volume: (value[0] ?? 0) / 100 })}
+              disabled={!form.soundEnabled}
+              aria-label="音量"
+            />
+            <p className="hint">提醒出现时播放一声自己生成的水滴声。</p>
           </div>
-          <Switch
-            id="login"
-            checked={form.launchAtLogin}
-            onCheckedChange={(checked) => patch({ launchAtLogin: checked })}
-          />
-        </div>
 
-        {error ? <p className="error">{error}</p> : null}
-        <p className="hint save-status">{saved ? "已保存。" : "\u00a0"}</p>
-
-        <div className="actions">
-          <Button
-            onClick={() => void onSave()}
-            disabled={saving}
-            className="disabled:opacity-100"
-          >
-            保存设置
-          </Button>
-          <Button variant="outline" onClick={() => void remindNow()}>
-            立即提醒
-          </Button>
-          <Button
-            variant="outline"
-            disabled={checkingUpdate || installingUpdate}
-            onClick={() => void onCheckUpdate()}
-          >
-            {checkingUpdate ? "正在检查…" : "检查更新"}
-          </Button>
-          <div className="row">
-            <Button variant="ghost" onClick={() => void pauseHour().then(setSnap)}>
-              暂停 1 小时
-            </Button>
-            <Button variant="ghost" onClick={() => void pauseToday().then(setSnap)}>
-              今日暂停
-            </Button>
+          <div className="switch-row">
+            <div>
+              <Label htmlFor="login">开机时启动</Label>
+              <p className="hint">
+                登录后在后台运行。须在已安装的 Rundi 里打开并点「保存设置」；开发版不会改系统开机项，以免把安装版注册表冲掉。
+              </p>
+            </div>
+            <Switch
+              id="login"
+              checked={form.launchAtLogin}
+              onCheckedChange={(checked) => patch({ launchAtLogin: checked })}
+            />
           </div>
-        </div>
+        </section>
 
-        {snap.updateAvailable && !updateDialog ? (
-          <p className="hint update-inline">
-            有新版本 {snap.updateAvailable.version} ·{" "}
-            <button
-              type="button"
-              className="linkish"
-              disabled={installingUpdate}
-              onClick={() => openUpdateDialog(snap.updateAvailable!)}
+        <section className="glass-panel glass-actions">
+          {error ? <p className="error">{error}</p> : null}
+          <p className="hint save-status">{saved ? "已保存。" : "\u00a0"}</p>
+
+          <div className="actions">
+            <Button
+              onClick={() => void onSave()}
+              disabled={saving}
+              className="disabled:opacity-100 glass-primary"
             >
-              查看更新
-            </button>
-          </p>
-        ) : null}
-        <p className="path">版本 {snap.appVersion}</p>
-        <p className="path">配置文件 {snap.configPath}</p>
+              保存设置
+            </Button>
+            <Button variant="outline" className="glass-chip" onClick={() => void remindNow()}>
+              立即提醒
+            </Button>
+            <Button
+              variant="outline"
+              className="glass-chip"
+              disabled={checkingUpdate || installingUpdate}
+              onClick={() => void onCheckUpdate()}
+            >
+              {checkingUpdate ? "正在检查…" : "检查更新"}
+            </Button>
+            <div className="row">
+              <Button
+                variant="ghost"
+                className="glass-ghost"
+                onClick={() => void pauseHour().then(setSnap)}
+              >
+                暂停 1 小时
+              </Button>
+              <Button
+                variant="ghost"
+                className="glass-ghost"
+                onClick={() => void pauseToday().then(setSnap)}
+              >
+                今日暂停
+              </Button>
+            </div>
+          </div>
+
+          {snap.updateAvailable && !updateDialog ? (
+            <p className="hint update-inline">
+              有新版本 {snap.updateAvailable.version} ·{" "}
+              <button
+                type="button"
+                className="linkish"
+                disabled={installingUpdate}
+                onClick={() => openUpdateDialog(snap.updateAvailable!)}
+              >
+                查看更新
+              </button>
+            </p>
+          ) : null}
+          <p className="path">版本 {snap.appVersion}</p>
+          <p className="path">配置文件 {snap.configPath}</p>
+        </section>
       </div>
 
       {updateToast ? (
@@ -684,7 +729,7 @@ export function Settings() {
             disabled={installingUpdate}
             onClick={dismissUpdateDialog}
           />
-          <div className="update-modal-card">
+          <div className="update-modal-card glass-panel">
             <p className="update-modal-kicker">发现新版本</p>
             <h2 id="update-dialog-title">润滴 {updateDialog.version}</h2>
             <p className="update-modal-lede">
@@ -733,7 +778,7 @@ export function Settings() {
               setHistoryConfirmClear(false);
             }}
           />
-          <div className="update-modal-card history-modal-card">
+          <div className="update-modal-card history-modal-card glass-panel">
             <p className="update-modal-kicker">喝水记录</p>
             <h2 id="history-dialog-title">历史记录</h2>
             <p className="update-modal-lede">按天查看过去的饮水量。跨天后会自动归档。</p>

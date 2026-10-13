@@ -362,20 +362,78 @@ fn hide_reminder(app: &AppHandle) {
     }
 }
 
-fn show_settings(app: &AppHandle) {
+/// 设置窗按需创建；关掉即销毁，避免隐藏 WebView 长期占内存。
+fn ensure_settings_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     if let Some(window) = app.get_webview_window("settings") {
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
-        // 设置窗是隐藏而非销毁；通知前端按已保存配置重载，避免残留未保存的表单。
-        let _ = window.emit("settings-opened", ());
+        return Ok(window);
+    }
+    let mut builder = WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("index.html".into()))
+        .title("润滴设置")
+        .inner_size(460.0, 700.0)
+        .min_inner_size(400.0, 560.0)
+        .resizable(true)
+        .visible(false)
+        .center()
+        .background_color(Color(223, 245, 241, 255));
+    #[cfg(target_os = "windows")]
+    {
+        // 降低 WebView2 附属 UI 开销；对功能无影响。
+        builder = builder.additional_browser_args("--disable-features=msWebOOUI,msPdfOOUI");
+    }
+    let settings = builder.build()?;
+    Ok(settings)
+}
+
+/// 提醒窗首次需要时再创建，平时托盘空闲可不挂 WebView。
+fn ensure_reminder_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
+    if let Some(window) = app.get_webview_window("reminder") {
+        return Ok(window);
+    }
+    let mut builder = WebviewWindowBuilder::new(app, "reminder", WebviewUrl::App("index.html".into()))
+        .title("该喝水啦")
+        .inner_size(300.0, 420.0)
+        .resizable(false)
+        .maximizable(false)
+        .minimizable(false)
+        .decorations(false)
+        .transparent(true)
+        .shadow(false)
+        .always_on_top(true)
+        .visible_on_all_workspaces(true)
+        .skip_taskbar(true)
+        .visible(false)
+        .focused(false)
+        .background_color(Color(0, 0, 0, 0));
+    #[cfg(target_os = "windows")]
+    {
+        builder = builder.additional_browser_args("--disable-features=msWebOOUI,msPdfOOUI");
+    }
+    let reminder = builder.build()?;
+    place_reminder_bottom_right(&reminder);
+    keep_in_background(&reminder);
+    Ok(reminder)
+}
+
+fn show_settings(app: &AppHandle) {
+    match ensure_settings_window(app) {
+        Ok(window) => {
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+            // 若窗口已存在（未销毁），通知前端按已保存配置重载。
+            let _ = window.emit("settings-opened", ());
+        }
+        Err(err) => eprintln!("润滴：打开设置失败：{err}"),
     }
 }
 
 fn present_reminder(app: &AppHandle, payload: &ReminderPayload) {
-    let Some(window) = app.get_webview_window("reminder") else {
-        eprintln!("润滴：提醒窗口还没建好");
-        return;
+    let window = match ensure_reminder_window(app) {
+        Ok(window) => window,
+        Err(err) => {
+            eprintln!("润滴：创建提醒窗口失败：{err}");
+            return;
+        }
     };
     let _ = window.emit("reminder", payload);
     let _ = window.unminimize();
@@ -715,39 +773,6 @@ fn keep_in_background(window: &WebviewWindow) {
     });
 }
 
-fn install_windows(app: &AppHandle) -> tauri::Result<()> {
-    let settings = WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("index.html".into()))
-        .title("润滴设置")
-        .inner_size(460.0, 700.0)
-        .min_inner_size(400.0, 560.0)
-        .resizable(true)
-        .visible(false)
-        .center()
-        .background_color(Color(244, 239, 230, 255))
-        .build()?;
-    keep_in_background(&settings);
-
-    let reminder = WebviewWindowBuilder::new(app, "reminder", WebviewUrl::App("index.html".into()))
-        .title("该喝水啦")
-        .inner_size(300.0, 420.0)
-        .resizable(false)
-        .maximizable(false)
-        .minimizable(false)
-        .decorations(false)
-        .transparent(true)
-        .shadow(false)
-        .always_on_top(true)
-        .visible_on_all_workspaces(true)
-        .skip_taskbar(true)
-        .visible(false)
-        .focused(false)
-        .background_color(Color(0, 0, 0, 0))
-        .build()?;
-    place_reminder_bottom_right(&reminder);
-    keep_in_background(&reminder);
-    Ok(())
-}
-
 fn install_tray(app: &AppHandle, state: &AppState) -> tauri::Result<()> {
     let icon = tauri::image::Image::from_bytes(TRAY_ICON)?;
     let menu = build_menu(app, state)?;
@@ -1012,7 +1037,7 @@ pub fn run() {
                     .config_warning
                     .get_or_insert(format!("开机启动没能同步：{err}"));
             }
-            install_windows(app.handle())?;
+            // WebView 按需创建：托盘空闲时不预建窗口，降低常驻内存。
             install_tray(app.handle(), &state)?;
             let shared = Arc::clone(&state.inner);
             app.manage(state);

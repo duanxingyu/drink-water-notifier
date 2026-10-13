@@ -1,10 +1,18 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 
 import { isTauri } from "@/api";
-import { Reminder } from "@/Reminder";
-import { Settings } from "@/Settings";
 
 type View = "settings" | "reminder";
+
+const Settings = lazy(async () => {
+  const mod = await import("@/Settings");
+  return { default: mod.Settings };
+});
+
+const Reminder = lazy(async () => {
+  const mod = await import("@/Reminder");
+  return { default: mod.Reminder };
+});
 
 function initialView(): View | null {
   const query = new URLSearchParams(window.location.search).get("view");
@@ -18,6 +26,7 @@ export function App() {
 
   useEffect(() => {
     document.documentElement.classList.toggle("reminder-view", view === "reminder");
+    document.documentElement.classList.toggle("settings-view", view === "settings");
     document.documentElement.classList.toggle("preview", !isTauri() && view !== null);
   }, [view]);
 
@@ -36,5 +45,9 @@ export function App() {
   }, []);
 
   if (view === null) return <div className="stage" />;
-  return view === "reminder" ? <Reminder /> : <Settings />;
+  return (
+    <Suspense fallback={<div className="stage" />}>
+      {view === "reminder" ? <Reminder /> : <Settings />}
+    </Suspense>
+  );
 }
