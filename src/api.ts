@@ -45,7 +45,7 @@ export type Snapshot = {
   updateAvailable: UpdateInfo | null;
 };
 
-export type ReminderKind = "drink" | "summary";
+export type ReminderKind = "drink" | "summary" | "ack";
 
 export type ReminderPayload = {
   kind: ReminderKind;

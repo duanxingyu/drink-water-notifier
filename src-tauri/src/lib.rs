@@ -113,7 +113,7 @@ impl AppState {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ReminderPayload {
-    /// `"drink"` 普通提醒；`"summary"` 下班小结。
+    /// `"drink"` 普通提醒；`"summary"` 下班小结；`"ack"` 托盘/快捷键记水确认。
     kind: String,
     token: u64,
     auto_dismiss_seconds: u32,
@@ -1037,7 +1037,7 @@ fn save_settings(
 }
 
 fn record_drink(app: &AppHandle, state: &AppState) -> Result<Snapshot, String> {
-    let (sound, volume) = {
+    let (sound, volume, payload) = {
         let mut guard = state.lock();
         let now = local_now();
         let previous_daily = guard.daily.clone();
@@ -1053,18 +1053,24 @@ fn record_drink(app: &AppHandle, state: &AppState) -> Result<Snapshot, String> {
             } = &mut *guard;
             record_intake(daily, history, today, amount, unit);
         }
-        guard.active = None;
+        guard.token = guard.token.saturating_add(1);
+        let mut payload = build_reminder_payload(&guard, "ack", guard.token);
+        payload.auto_dismiss_seconds = 2;
+        // 确认句带上今日总量，比单独「记下这一杯」更有反馈。
+        payload.drink_ack = format!("{} · 今日 {}", payload.drink_ack, payload.intake_label);
+        guard.active = Some(payload.clone());
         if let Err(err) = persist(&guard) {
             guard.daily = previous_daily;
             guard.history = previous_history;
+            guard.active = None;
             return Err(err);
         }
-        (sound, volume)
+        (sound, volume, payload)
     };
-    hide_reminder(app);
     if sound {
         audio::play_drop(volume);
     }
+    present_reminder(app, &payload);
     publish(app, state);
     Ok(state.snapshot())
 }

@@ -33,7 +33,8 @@ export function Reminder() {
     setExiting(false);
     setPayload(next);
     setLeft(next.autoDismissSeconds);
-    setPhase("ask");
+    // 托盘/快捷键记水：直接显示确认 toast，不进「该喝水啦」流程。
+    setPhase(next.kind === "ack" ? "drank" : "ask");
     if (isTauri()) {
       void restorePosition().catch(() => void placeBottomRight());
     }
@@ -60,7 +61,10 @@ export function Reminder() {
   }, []);
 
   useEffect(() => {
-    if (!payload || phase !== "ask" || exiting) return;
+    if (!payload || exiting) return;
+    const tickingAsk = phase === "ask";
+    const tickingAck = phase === "drank" && payload.kind === "ack";
+    if (!tickingAsk && !tickingAck) return;
     const started = Date.now();
     const total = payload.autoDismissSeconds * 1000;
     const timer = window.setInterval(() => {
@@ -79,13 +83,17 @@ export function Reminder() {
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      if (phase !== "ask" || exiting || !payload) return;
+      if (exiting || !payload) return;
       if (event.key === "Escape") {
-        void exitThen(() => {
-          setPhase("gone");
-          void dismiss();
-        });
+        if (phase === "ask" || payload.kind === "ack") {
+          void exitThen(() => {
+            setPhase("gone");
+            void dismiss();
+          });
+        }
+        return;
       }
+      if (phase !== "ask") return;
       if (event.key === "Enter" && payload.kind !== "summary") {
         void confirmDrink();
       }
@@ -143,6 +151,8 @@ export function Reminder() {
   const minutes = payload.snoozeMinutes;
   const cardClass = exiting ? "card card-out" : "card card-in";
   const isSummary = payload.kind === "summary";
+  const isAck = payload.kind === "ack";
+  const dialogLabel = isSummary ? "今日小结" : isAck ? "已记下" : "该喝水啦";
 
   return (
     <div className="stage">
@@ -150,7 +160,7 @@ export function Reminder() {
         key={payload.token}
         className={cardClass}
         role="dialog"
-        aria-label={isSummary ? "今日小结" : "该喝水啦"}
+        aria-label={dialogLabel}
         onMouseDown={(event) => void onDragDown(event)}
       >
         <div className="brand card-item">
