@@ -79,14 +79,14 @@ export function Reminder() {
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      if (phase !== "ask" || exiting) return;
+      if (phase !== "ask" || exiting || !payload) return;
       if (event.key === "Escape") {
         void exitThen(() => {
           setPhase("gone");
           void dismiss();
         });
       }
-      if (event.key === "Enter") {
+      if (event.key === "Enter" && payload.kind !== "summary") {
         void confirmDrink();
       }
     }
@@ -117,6 +117,14 @@ export function Reminder() {
     });
   }
 
+  async function confirmSummary() {
+    if (exiting) return;
+    exitThen(() => {
+      setPhase("gone");
+      void dismiss();
+    });
+  }
+
   async function onDragDown(event: React.MouseEvent) {
     if (!isTauri() || event.button !== 0 || exiting) return;
     if ((event.target as HTMLElement).closest("button, a, input")) return;
@@ -134,6 +142,7 @@ export function Reminder() {
 
   const minutes = payload.snoozeMinutes;
   const cardClass = exiting ? "card card-out" : "card card-in";
+  const isSummary = payload.kind === "summary";
 
   return (
     <div className="stage">
@@ -141,7 +150,7 @@ export function Reminder() {
         key={payload.token}
         className={cardClass}
         role="dialog"
-        aria-label="该喝水啦"
+        aria-label={isSummary ? "今日小结" : "该喝水啦"}
         onMouseDown={(event) => void onDragDown(event)}
       >
         <div className="brand card-item">
@@ -149,25 +158,41 @@ export function Reminder() {
           <span className="drag-hint">拖动 · {left}s</span>
         </div>
         {phase === "ask" ? (
-          <>
-            <h1 className="headline card-item">该喝水啦</h1>
-            <p className="sub card-item">{payload.drinkPrompt}</p>
-            <div className="glass-wrap card-item">
-              <Glass dismissSeconds={payload.autoDismissSeconds} />
-            </div>
-            <p className="meta card-item">今日已喝 {payload.intakeLabel}</p>
-            {payload.goalLabel ? (
-              <p className="meta goal-meta card-item">{payload.goalLabel}</p>
-            ) : null}
-            <div className="actions card-item">
-              <Button variant="drink" size="default" onClick={() => void confirmDrink()}>
-                喝了
-              </Button>
-              <Button variant="outline" size="default" onClick={() => void confirmLater()}>
-                稍后（{minutes} 分）
-              </Button>
-            </div>
-          </>
+          isSummary ? (
+            <>
+              <h1 className="headline card-item">今日小结</h1>
+              <p className="sub card-item">{payload.drinkPrompt}</p>
+              <p className="meta card-item">今日已喝 {payload.intakeLabel}</p>
+              {payload.goalLabel ? (
+                <p className="meta goal-meta card-item">{payload.goalLabel}</p>
+              ) : null}
+              <div className="actions card-item">
+                <Button variant="drink" size="default" onClick={() => void confirmSummary()}>
+                  知道了
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <h1 className="headline card-item">该喝水啦</h1>
+              <p className="sub card-item">{payload.drinkPrompt}</p>
+              <div className="glass-wrap card-item">
+                <Glass dismissSeconds={payload.autoDismissSeconds} />
+              </div>
+              <p className="meta card-item">今日已喝 {payload.intakeLabel}</p>
+              {payload.goalLabel ? (
+                <p className="meta goal-meta card-item">{payload.goalLabel}</p>
+              ) : null}
+              <div className="actions card-item">
+                <Button variant="drink" size="default" onClick={() => void confirmDrink()}>
+                  喝了
+                </Button>
+                <Button variant="outline" size="default" onClick={() => void confirmLater()}>
+                  稍后（{minutes} 分）
+                </Button>
+              </div>
+            </>
+          )
         ) : (
           <p className="toast card-item">
             {phase === "drank" ? payload.drinkAck : `${minutes} 分钟后再叫你`}

@@ -14,6 +14,7 @@ import {
   DESK_GOAL_ML_MIN,
   formatIntake,
   formatIntakeApprox,
+  buildWeekBars,
   getDrinkHistory,
   getSnapshot,
   installUpdate,
@@ -27,6 +28,7 @@ import {
   remindNow,
   resume,
   saveSettings,
+  summarizeWeek,
   type DrinkHistoryDay,
   type DrinkUnit,
   type SettingsInput,
@@ -71,6 +73,8 @@ function toForm(snap: Snapshot): SettingsInput {
     drinkAmount: snap.drinkAmount,
     highIntakeMode: snap.highIntakeMode,
     deskGoalMl: snap.deskGoalMl,
+    quickDrinkShortcut: snap.quickDrinkShortcut,
+    daySummaryEnabled: snap.daySummaryEnabled,
   };
 }
 
@@ -430,6 +434,9 @@ export function Settings() {
     : RECOMMENDED_DESK_GOAL_ML;
   const goalProgress = deskGoalMl > 0 ? Math.min(1, intakeMlToday / deskGoalMl) : 1;
   const goalRemaining = Math.max(0, deskGoalMl - intakeMlToday);
+  const weekBars = buildWeekBars(historyDays);
+  const weekStats = summarizeWeek(weekBars);
+  const weekMaxMl = Math.max(...weekBars.map((bar) => bar.ml), 1);
 
   return (
     <main className="settings">
@@ -757,6 +764,30 @@ export function Settings() {
               onCheckedChange={(checked) => patch({ launchAtLogin: checked })}
             />
           </div>
+
+          <div className="switch-row">
+            <div>
+              <Label htmlFor="quick-drink">快捷键记水</Label>
+              <p className="hint">Ctrl/Cmd+Shift+D 立刻记一次当前杯量。托盘也有「刚才喝了」。</p>
+            </div>
+            <Switch
+              id="quick-drink"
+              checked={form.quickDrinkShortcut}
+              onCheckedChange={(checked) => patch({ quickDrinkShortcut: checked })}
+            />
+          </div>
+
+          <div className="switch-row">
+            <div>
+              <Label htmlFor="day-summary">下班小结</Label>
+              <p className="hint">工作日到达结束时间后，弹出一次今日饮水小结（无提示音）。</p>
+            </div>
+            <Switch
+              id="day-summary"
+              checked={form.daySummaryEnabled}
+              onCheckedChange={(checked) => patch({ daySummaryEnabled: checked })}
+            />
+          </div>
         </section>
 
         <section className="glass-panel glass-actions">
@@ -907,25 +938,50 @@ export function Settings() {
             <p className="update-modal-lede">按天查看过去的饮水量。跨天后会自动归档。</p>
             {historyLoading ? (
               <p className="hint">正在读取…</p>
-            ) : historyDays.length === 0 ? (
-              <p className="hint">还没有记录。从今天起点「喝了」会自动保存。</p>
             ) : (
-              <ul className="history-list">
-                {historyDays.map((day) => (
-                  <li key={day.date} className="history-item">
-                    <div>
-                      <div className="history-date">
-                        {formatHistoryDate(day.date, day.isToday)}
-                        <span className="history-date-iso">{day.date}</span>
+              <>
+                <div className="week-chart" aria-label="近七天饮水量">
+                  <div className="week-chart-bars">
+                    {weekBars.map((bar) => (
+                      <div
+                        key={bar.date}
+                        className={bar.isToday ? "week-bar-col today" : "week-bar-col"}
+                      >
+                        <div className="week-bar-track">
+                          <div
+                            className="week-bar-fill"
+                            style={{ height: `${Math.round((bar.ml / weekMaxMl) * 100)}%` }}
+                          />
+                        </div>
+                        <span className="week-bar-label">{bar.weekday}</span>
                       </div>
-                      <div className="history-label">{day.label}</div>
-                      {day.convertedLabel ? (
-                        <div className="history-converted">{day.convertedLabel}</div>
-                      ) : null}
-                    </div>
-                  </li>
-                ))}
-              </ul>
+                    ))}
+                  </div>
+                  <p className="hint week-chart-summary">
+                    近 7 天已记 {weekStats.daysLogged} 天 · 日均约 {weekStats.avgMl} 毫升
+                  </p>
+                </div>
+                {historyDays.length === 0 ? (
+                  <p className="hint">还没有记录。从今天起点「喝了」会自动保存。</p>
+                ) : (
+                  <ul className="history-list">
+                    {historyDays.map((day) => (
+                      <li key={day.date} className="history-item">
+                        <div>
+                          <div className="history-date">
+                            {formatHistoryDate(day.date, day.isToday)}
+                            <span className="history-date-iso">{day.date}</span>
+                          </div>
+                          <div className="history-label">{day.label}</div>
+                          {day.convertedLabel ? (
+                            <div className="history-converted">{day.convertedLabel}</div>
+                          ) : null}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
             )}
             {historyConfirmClear ? (
               <p className="hint history-confirm">

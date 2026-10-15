@@ -35,6 +35,8 @@ export type Snapshot = {
   glassesToday: number;
   intakeLabel: string;
   unitLabel: string;
+  quickDrinkShortcut: boolean;
+  daySummaryEnabled: boolean;
   paused: boolean;
   pausedUntil: string | null;
   configPath: string;
@@ -43,7 +45,10 @@ export type Snapshot = {
   updateAvailable: UpdateInfo | null;
 };
 
+export type ReminderKind = "drink" | "summary";
+
 export type ReminderPayload = {
+  kind: ReminderKind;
   token: number;
   autoDismissSeconds: number;
   snoozeMinutes: number;
@@ -74,6 +79,8 @@ export type SettingsInput = {
   drinkAmount: number;
   highIntakeMode: boolean;
   deskGoalMl: number;
+  quickDrinkShortcut: boolean;
+  daySummaryEnabled: boolean;
 };
 
 /** 1 杯 ≈ 350 毫升 */
@@ -177,6 +184,8 @@ const preview: Snapshot = {
   glassesToday: 3,
   intakeLabel: "3 杯",
   unitLabel: "杯",
+  quickDrinkShortcut: true,
+  daySummaryEnabled: true,
   paused: false,
   pausedUntil: null,
   configPath: "预览模式 · 尚未写入系统配置目录",
@@ -291,6 +300,8 @@ export async function saveSettings(input: SettingsInput): Promise<Snapshot> {
         input.deskGoalMl > 0
           ? Math.min(1, intakeMlToday / input.deskGoalMl)
           : 1,
+      quickDrinkShortcut: input.quickDrinkShortcut,
+      daySummaryEnabled: input.daySummaryEnabled,
       paused: memory.paused,
       pausedUntil: memory.pausedUntil,
       configWarning: null,
@@ -411,9 +422,39 @@ export async function onReminder(cb: (payload: ReminderPayload) => void): Promis
   return unlisten;
 }
 
+function defaultDrinkPrompt(unit: DrinkUnit): string {
+  if (unit === "sip") return "离开屏幕一小会儿，喝一口水。";
+  if (unit === "ml") return "离开屏幕一小会儿，喝一点水。";
+  return "离开屏幕一小会儿，喝一杯水。";
+}
+
+/** 浏览器预览用的简化上下文文案（与 core 规则大致对齐）。 */
+export function previewContextualPrompt(
+  unit: DrinkUnit,
+  intakeMlToday: number,
+  deskGoalMl: number,
+  highIntakeMode: boolean,
+): string {
+  if (highIntakeMode && deskGoalMl > 0 && intakeMlToday < deskGoalMl * 0.35) {
+    if (unit === "sip") return "进度偏慢，先喝一口。";
+    if (unit === "ml") return "进度偏慢，先补一点水。";
+    return "进度偏慢，这杯先补上。";
+  }
+  if (intakeMlToday === 0) {
+    if (unit === "sip") return "下午了还没记过，先喝一口。";
+    if (unit === "ml") return "下午了还没记过，先喝一点。";
+    return "下午了还没记过，先喝一杯。";
+  }
+  if (deskGoalMl > 0 && intakeMlToday >= deskGoalMl) {
+    return "目标到了，再润一下也不错。";
+  }
+  return defaultDrinkPrompt(unit);
+}
+
 export function previewReminder(): ReminderPayload {
   const intakeMlToday = toMl(memory.glassesToday, memory.drinkUnit);
   return {
+    kind: "drink",
     token: 1,
     autoDismissSeconds: memory.autoDismissSeconds,
     snoozeMinutes: memory.snoozeMinutes,
@@ -421,12 +462,12 @@ export function previewReminder(): ReminderPayload {
     drinkUnit: memory.drinkUnit,
     drinkAmount: memory.drinkAmount,
     intakeLabel: memory.intakeLabel,
-    drinkPrompt:
-      memory.drinkUnit === "sip"
-        ? "离开屏幕一小会儿，喝一口水。"
-        : memory.drinkUnit === "ml"
-          ? "离开屏幕一小会儿，喝一点水。"
-          : "离开屏幕一小会儿，喝一杯水。",
+    drinkPrompt: previewContextualPrompt(
+      memory.drinkUnit,
+      intakeMlToday,
+      memory.deskGoalMl,
+      memory.highIntakeMode,
+    ),
     drinkAck:
       memory.drinkUnit === "sip"
         ? "记下这一口"
@@ -439,5 +480,37 @@ export function previewReminder(): ReminderPayload {
     goalLabel: memory.highIntakeMode
       ? `工位目标 ${intakeMlToday}/${memory.deskGoalMl} 毫升`
       : null,
+  };
+}
+
+/** 近 7 天补齐（无记录为 0），用于历史周视图。 */
+export function buildWeekBars(
+  days: DrinkHistoryDay[],
+  todayIso = new Date().toISOString().slice(0, 10),
+): Array<{ date: string; ml: number; isToday: boolean; weekday: string }> {
+  const byDate = new Map(days.map((day) => [day.date, toMl(day.amount, day.unit)]));
+  const labels = ["日", "一", "二", "三", "四", "五", "六"];
+  const result: Array<{ date: string; ml: number; isToday: boolean; weekday: string }> = [];
+  const anchor = new Date(`${todayIso}T12:00:00`);
+  for (let i = 6; i >= 0; i -= 1) {
+    const d = new Date(anchor);
+    d.setDate(anchor.getDate() - i);
+    const iso = d.toISOString().slice(0, 10);
+    result.push({
+      date: iso,
+      ml: byDate.get(iso) ?? 0,
+      isToday: iso === todayIso,
+      weekday: labels[d.getDay()] ?? "",
+    });
+  }
+  return result;
+}
+
+export function summarizeWeek(bars: Array<{ ml: number }>): { daysLogged: number; avgMl: number } {
+  const logged = bars.filter((bar) => bar.ml > 0);
+  const total = bars.reduce((sum, bar) => sum + bar.ml, 0);
+  return {
+    daysLogged: logged.length,
+    avgMl: logged.length === 0 ? 0 : Math.round(total / 7),
   };
 }

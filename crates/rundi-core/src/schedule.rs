@@ -94,6 +94,8 @@ pub struct RuntimeState {
     pub last_shown: Option<DateTime<FixedOffset>>,
     pub snooze_until: Option<DateTime<FixedOffset>>,
     pub paused_until: Option<DateTime<FixedOffset>>,
+    /// 已弹出「今日小结」的本地日期；同日不重复。
+    pub summary_shown_on: Option<NaiveDate>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -176,7 +178,7 @@ fn normalize(days: impl IntoIterator<Item = Weekday>) -> Vec<Weekday> {
     days
 }
 
-fn is_working_day(date: NaiveDate, schedule: &Schedule) -> bool {
+pub fn is_working_day(date: NaiveDate, schedule: &Schedule) -> bool {
     if schedule.respect_chinese_holidays {
         if let Some(forced) = china_day_override(date) {
             return forced;

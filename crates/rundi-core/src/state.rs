@@ -49,6 +49,8 @@ struct PersistedState {
     pub last_shown: Option<String>,
     pub snooze_until: Option<String>,
     pub paused_until: Option<String>,
+    #[serde(default)]
+    pub summary_shown_on: Option<String>,
     pub count_date: Option<String>,
     pub glasses: u32,
     #[serde(default)]
@@ -63,6 +65,7 @@ impl Default for PersistedState {
             last_shown: None,
             snooze_until: None,
             paused_until: None,
+            summary_shown_on: None,
             count_date: None,
             glasses: 0,
             count_unit: None,
@@ -216,6 +219,9 @@ impl PersistedState {
             last_shown: runtime.last_shown.map(|time| time.to_rfc3339()),
             snooze_until: runtime.snooze_until.map(|time| time.to_rfc3339()),
             paused_until: runtime.paused_until.map(|time| time.to_rfc3339()),
+            summary_shown_on: runtime
+                .summary_shown_on
+                .map(|date| date.format("%Y-%m-%d").to_string()),
             count_date: Some(daily.date.format("%Y-%m-%d").to_string()),
             glasses: daily.glasses,
             count_unit: Some(daily.unit.code().to_string()),
@@ -247,11 +253,19 @@ impl PersistedState {
             Some(ref code) => parse_drink_unit(code)?,
             None => DrinkUnit::Cup,
         };
+        let summary_shown_on = match self.summary_shown_on {
+            Some(value) => Some(
+                NaiveDate::parse_from_str(&value, "%Y-%m-%d")
+                    .map_err(|_| ConfigError::Parse(format!("无法识别日期「{value}」")))?,
+            ),
+            None => None,
+        };
         Ok((
             RuntimeState {
                 last_shown: parse_optional_time(self.last_shown)?,
                 snooze_until: parse_optional_time(self.snooze_until)?,
                 paused_until: parse_optional_time(self.paused_until)?,
+                summary_shown_on,
             },
             DailyCount {
                 date: match self.count_date {

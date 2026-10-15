@@ -59,6 +59,10 @@ pub struct AppConfig {
     pub high_intake_mode: bool,
     /// 电脑前建议喝水量（毫升）。默认即为推荐值 1500。
     pub desk_goal_ml: u32,
+    /// 全局快捷键一键记水（Ctrl/Cmd+Shift+D）。
+    pub quick_drink_shortcut: bool,
+    /// 工作日时段结束后弹出今日小结。
+    pub day_summary_enabled: bool,
 }
 
 impl Default for AppConfig {
@@ -74,6 +78,8 @@ impl Default for AppConfig {
             drink_amount: 1,
             high_intake_mode: false,
             desk_goal_ml: RECOMMENDED_DESK_GOAL_ML,
+            quick_drink_shortcut: true,
+            day_summary_enabled: true,
         }
     }
 }
@@ -126,6 +132,8 @@ impl AppConfig {
             drink_amount,
             high_intake_mode: false,
             desk_goal_ml: RECOMMENDED_DESK_GOAL_ML,
+            quick_drink_shortcut: true,
+            day_summary_enabled: true,
         })
     }
 
@@ -140,6 +148,15 @@ impl AppConfig {
         self.high_intake_mode = high_intake_mode;
         self.desk_goal_ml = desk_goal_ml;
         Ok(())
+    }
+
+    pub fn set_smart_flags(
+        &mut self,
+        quick_drink_shortcut: bool,
+        day_summary_enabled: bool,
+    ) {
+        self.quick_drink_shortcut = quick_drink_shortcut;
+        self.day_summary_enabled = day_summary_enabled;
     }
 }
 
@@ -173,6 +190,10 @@ struct ConfigFile {
     high_intake_mode: bool,
     #[serde(default = "default_desk_goal_ml")]
     desk_goal_ml: u32,
+    #[serde(default = "default_quick_drink_shortcut")]
+    quick_drink_shortcut: bool,
+    #[serde(default = "default_day_summary")]
+    day_summary_enabled: bool,
 }
 
 fn default_workdays() -> Vec<String> {
@@ -226,6 +247,12 @@ fn default_high_intake() -> bool {
 fn default_desk_goal_ml() -> u32 {
     RECOMMENDED_DESK_GOAL_ML
 }
+fn default_quick_drink_shortcut() -> bool {
+    true
+}
+fn default_day_summary() -> bool {
+    true
+}
 
 impl Default for ConfigFile {
     fn default() -> Self {
@@ -251,6 +278,8 @@ impl From<&AppConfig> for ConfigFile {
             drink_amount: config.drink_amount,
             high_intake_mode: config.high_intake_mode,
             desk_goal_ml: config.desk_goal_ml,
+            quick_drink_shortcut: config.quick_drink_shortcut,
+            day_summary_enabled: config.day_summary_enabled,
         }
     }
 }
@@ -272,6 +301,7 @@ impl ConfigFile {
             self.drink_amount,
         )?;
         config.set_high_intake(self.high_intake_mode, self.desk_goal_ml)?;
+        config.set_smart_flags(self.quick_drink_shortcut, self.day_summary_enabled);
         Ok(config)
     }
 }

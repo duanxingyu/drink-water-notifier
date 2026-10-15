@@ -6,6 +6,7 @@ mod goal;
 mod holiday;
 mod schedule;
 mod state;
+mod tips;
 mod units;
 
 pub use config::{
@@ -18,12 +19,16 @@ pub use goal::{
     validate_desk_goal_ml,
 };
 pub use schedule::{
-    apply_pause, apply_snooze, clear_pause, end_of_local_day, evaluate, mark_shown, Decision,
-    RuntimeState, Schedule,
+    apply_pause, apply_snooze, clear_pause, end_of_local_day, evaluate, is_working_day, mark_shown,
+    Decision, RuntimeState, Schedule,
 };
 pub use state::{
     clear_history, convert_daily_unit, glasses_on, load_state, merged_history, record_intake,
     rollover_daily, save_state, trim_history, DailyCount, DayIntake, HISTORY_RETENTION_DAYS,
+};
+pub use tips::{
+    expected_for_prompt, format_contextual_prompt, format_day_summary, history_excluding_today,
+    summary_due, PromptContext,
 };
 pub use units::{
     convert_drink_amount, convert_intake_total, format_drink_ack, format_drink_prompt,

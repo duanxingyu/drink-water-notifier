@@ -6,14 +6,15 @@ mod panel;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::Duration;
 
-use chrono::{DateTime, FixedOffset, Local, TimeDelta};
+use chrono::{DateTime, FixedOffset, Local, TimeDelta, TimeZone};
 use rundi_core::{
     apply_pause, apply_snooze, clear_history, clear_pause, config_file_path, convert_daily_unit,
-    end_of_local_day, evaluate, format_drink_ack, format_drink_prompt, format_intake,
-    format_intake_approx, glasses_on, goal_progress, goal_remaining_ml, intake_ml, load_config,
-    load_state, mark_shown, merged_history, paced_interval_minutes, record_intake, rollover_daily,
-    save_config, save_state, state_file_path, weekday_code, AppConfig, DailyCount, DayIntake,
-    Decision, RuntimeState, Schedule,
+    end_of_local_day, evaluate, expected_for_prompt, format_contextual_prompt, format_day_summary,
+    format_drink_ack, format_intake, format_intake_approx, glasses_on, goal_progress,
+    goal_remaining_ml, history_excluding_today, intake_ml, load_config, load_state, mark_shown,
+    merged_history, paced_interval_minutes, record_intake, rollover_daily, save_config, save_state,
+    state_file_path, summary_due, weekday_code, AppConfig, DailyCount, DayIntake, Decision,
+    PromptContext, RuntimeState, Schedule,
 };
 use serde::{Deserialize, Serialize};
 use tauri::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
@@ -23,7 +24,38 @@ use tauri::{
     AppHandle, Emitter, Manager, RunEvent, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
 };
 use tauri_plugin_autostart::ManagerExt;
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_updater::UpdaterExt;
+
+fn quick_drink_shortcut() -> Shortcut {
+    #[cfg(target_os = "macos")]
+    let modifiers = Modifiers::SUPER | Modifiers::SHIFT;
+    #[cfg(not(target_os = "macos"))]
+    let modifiers = Modifiers::CONTROL | Modifiers::SHIFT;
+    Shortcut::new(Some(modifiers), Code::KeyD)
+}
+
+fn sync_quick_drink_shortcut(app: &AppHandle, enabled: bool) -> Result<(), String> {
+    let shortcut = quick_drink_shortcut();
+    let api = app.global_shortcut();
+    let _ = api.unregister(shortcut.clone());
+    if !enabled {
+        return Ok(());
+    }
+    api.on_shortcut(shortcut, |app, _shortcut, event| {
+        if event.state != ShortcutState::Pressed {
+            return;
+        }
+        let Some(state) = app.try_state::<AppState>() else {
+            return;
+        };
+        if let Err(err) = record_drink(app, &state) {
+            eprintln!("润滴：快捷键记水失败：{err}");
+        }
+    })
+    .map_err(|err| err.to_string())?;
+    Ok(())
+}
 
 #[cfg(target_os = "macos")]
 const TRAY_ICON: &[u8] = include_bytes!("../icons/trayTemplate.png");
@@ -81,6 +113,8 @@ impl AppState {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ReminderPayload {
+    /// `"drink"` 普通提醒；`"summary"` 下班小结。
+    kind: String,
     token: u64,
     auto_dismiss_seconds: u32,
     snooze_minutes: u32,
@@ -119,6 +153,8 @@ struct Snapshot {
     glasses_today: u32,
     intake_label: String,
     unit_label: String,
+    quick_drink_shortcut: bool,
+    day_summary_enabled: bool,
     paused: bool,
     paused_until: Option<String>,
     config_path: String,
@@ -162,6 +198,8 @@ struct SettingsInput {
     drink_amount: u32,
     high_intake_mode: bool,
     desk_goal_ml: u32,
+    quick_drink_shortcut: bool,
+    day_summary_enabled: bool,
 }
 
 fn local_now() -> DateTime<FixedOffset> {
@@ -189,6 +227,63 @@ fn active_schedule(guard: &Inner, now: DateTime<FixedOffset>) -> Schedule {
         &guard.config.schedule,
     );
     guard.config.schedule.with_interval_minutes(paced)
+}
+
+fn build_drink_prompt(guard: &Inner, now: DateTime<FixedOffset>, intake_ml_today: u32) -> String {
+    let today = now.date_naive();
+    let recent = history_excluding_today(&guard.history, today);
+    let (window_progress, expected_ml) =
+        expected_for_prompt(now, &guard.config.schedule, guard.config.desk_goal_ml);
+    format_contextual_prompt(&PromptContext {
+        unit: guard.config.drink_unit,
+        intake_ml_today,
+        desk_goal_ml: guard.config.desk_goal_ml,
+        high_intake_mode: guard.config.high_intake_mode,
+        window_progress,
+        expected_ml,
+        recent_history: &recent,
+    })
+}
+
+fn build_reminder_payload(guard: &Inner, kind: &str, token: u64) -> ReminderPayload {
+    let now = local_now();
+    let glasses_today = glasses_on(&guard.daily, now.date_naive());
+    let intake_ml_today = intake_ml(glasses_today, guard.config.drink_unit);
+    let intake_label = format_intake(glasses_today, guard.config.drink_unit);
+    let drink_prompt = if kind == "summary" {
+        format_day_summary(
+            &intake_label,
+            intake_ml_today,
+            guard.config.desk_goal_ml,
+            guard.config.high_intake_mode,
+        )
+    } else {
+        build_drink_prompt(guard, now, intake_ml_today)
+    };
+    ReminderPayload {
+        kind: kind.to_string(),
+        token,
+        auto_dismiss_seconds: if kind == "summary" {
+            guard.config.auto_dismiss_seconds.max(12)
+        } else {
+            guard.config.auto_dismiss_seconds
+        },
+        snooze_minutes: guard.config.snooze_minutes,
+        glasses_today,
+        drink_unit: guard.config.drink_unit.code().to_string(),
+        drink_amount: guard.config.drink_amount,
+        intake_label,
+        drink_prompt,
+        drink_ack: format_drink_ack(guard.config.drink_unit).to_string(),
+        high_intake_mode: guard.config.high_intake_mode,
+        desk_goal_ml: guard.config.desk_goal_ml,
+        intake_ml_today,
+        goal_label: goal_label_for(
+            intake_ml_today,
+            guard.config.desk_goal_ml,
+            guard.config.high_intake_mode,
+        ),
+    }
 }
 
 fn snapshot_from(guard: &Inner) -> Snapshot {
@@ -225,6 +320,8 @@ fn snapshot_from(guard: &Inner) -> Snapshot {
         glasses_today,
         intake_label: format_intake(glasses_today, guard.config.drink_unit),
         unit_label: guard.config.drink_unit.label().to_string(),
+        quick_drink_shortcut: guard.config.quick_drink_shortcut,
+        day_summary_enabled: guard.config.day_summary_enabled,
         paused: paused_until.is_some(),
         paused_until: paused_until.map(|time| time.to_rfc3339()),
         config_path: guard.config_path.display().to_string(),
@@ -510,6 +607,7 @@ fn build_menu(app: &AppHandle, state: &AppState) -> tauri::Result<Menu<tauri::Wr
         false,
         None::<&str>,
     )?;
+    let quick_drink = MenuItem::with_id(app, "drink", "刚才喝了", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "打开设置", true, None::<&str>)?;
     let now = MenuItem::with_id(app, "now", "立即提醒", true, None::<&str>)?;
     let check_update = MenuItem::with_id(app, "check-update", "检查更新", true, None::<&str>)?;
@@ -535,6 +633,7 @@ fn build_menu(app: &AppHandle, state: &AppState) -> tauri::Result<Menu<tauri::Wr
                 app,
                 &[
                     &count,
+                    &quick_drink,
                     &sep_a,
                     &settings,
                     &now,
@@ -551,6 +650,7 @@ fn build_menu(app: &AppHandle, state: &AppState) -> tauri::Result<Menu<tauri::Wr
                 app,
                 &[
                     &count,
+                    &quick_drink,
                     &sep_a,
                     &settings,
                     &now,
@@ -570,6 +670,7 @@ fn build_menu(app: &AppHandle, state: &AppState) -> tauri::Result<Menu<tauri::Wr
                 app,
                 &[
                     &count,
+                    &quick_drink,
                     &sep_a,
                     &settings,
                     &now,
@@ -587,6 +688,7 @@ fn build_menu(app: &AppHandle, state: &AppState) -> tauri::Result<Menu<tauri::Wr
                 app,
                 &[
                     &count,
+                    &quick_drink,
                     &sep_a,
                     &settings,
                     &now,
@@ -625,6 +727,7 @@ fn on_menu(app: &AppHandle, event: MenuEvent) {
             show_settings(app);
             Ok(())
         }
+        "drink" => record_drink(app, &state).map(|_| ()),
         "now" => queue_show(&state),
         "pause-hour" => pause_for(&state, 60),
         "pause-today" => pause_for_today(&state),
@@ -747,6 +850,32 @@ fn scheduler_loop(app: AppHandle, sync: Arc<InnerSync>) {
         ensure_daily_rolled(&mut guard);
         let now = local_now();
         let schedule = active_schedule(&guard, now);
+
+        let show_summary = summary_due(
+            now,
+            &guard.config.schedule,
+            &guard.runtime,
+            guard.config.day_summary_enabled,
+        );
+        if show_summary {
+            guard.runtime.summary_shown_on = Some(now.date_naive());
+            guard.token = guard.token.saturating_add(1);
+            let payload = build_reminder_payload(&guard, "summary", guard.token);
+            guard.active = Some(payload.clone());
+            if let Err(err) = save_state(
+                &guard.state_path,
+                &guard.runtime,
+                &guard.daily,
+                &guard.history,
+            ) {
+                eprintln!("润滴：保存小结状态失败：{err}");
+            }
+            drop(guard);
+            present_reminder(&app, &payload);
+            guard = sync.mu.lock().unwrap_or_else(|err| err.into_inner());
+            continue;
+        }
+
         let should_show = if guard.force_show {
             guard.force_show = false;
             true
@@ -757,27 +886,7 @@ fn scheduler_loop(app: AppHandle, sync: Arc<InnerSync>) {
         if should_show {
             mark_shown(&mut guard.runtime, now);
             guard.token = guard.token.saturating_add(1);
-            let glasses_today = glasses_on(&guard.daily, now.date_naive());
-            let intake_ml_today = intake_ml(glasses_today, guard.config.drink_unit);
-            let payload = ReminderPayload {
-                token: guard.token,
-                auto_dismiss_seconds: guard.config.auto_dismiss_seconds,
-                snooze_minutes: guard.config.snooze_minutes,
-                glasses_today,
-                drink_unit: guard.config.drink_unit.code().to_string(),
-                drink_amount: guard.config.drink_amount,
-                intake_label: format_intake(glasses_today, guard.config.drink_unit),
-                drink_prompt: format_drink_prompt(guard.config.drink_unit).to_string(),
-                drink_ack: format_drink_ack(guard.config.drink_unit).to_string(),
-                high_intake_mode: guard.config.high_intake_mode,
-                desk_goal_ml: guard.config.desk_goal_ml,
-                intake_ml_today,
-                goal_label: goal_label_for(
-                    intake_ml_today,
-                    guard.config.desk_goal_ml,
-                    guard.config.high_intake_mode,
-                ),
-            };
+            let payload = build_reminder_payload(&guard, "drink", guard.token);
             guard.active = Some(payload.clone());
             let sound = guard.config.sound_enabled;
             let volume = guard.config.volume;
@@ -801,6 +910,23 @@ fn scheduler_loop(app: AppHandle, sync: Arc<InnerSync>) {
         let target = match evaluate(now, &schedule, &guard.runtime) {
             Decision::WaitUntil(target) => target,
             Decision::Show => now + TimeDelta::milliseconds(400),
+        };
+        // 若小结即将到期，别睡过结束时刻。
+        let summary_wake = if guard.config.day_summary_enabled
+            && guard.runtime.summary_shown_on != Some(now.date_naive())
+        {
+            let naive = now.date_naive().and_time(guard.config.schedule.end);
+            let end = match now.offset().from_local_datetime(&naive) {
+                chrono::LocalResult::Single(dt) | chrono::LocalResult::Ambiguous(dt, _) => Some(dt),
+                chrono::LocalResult::None => None,
+            };
+            end.filter(|at| *at > now)
+        } else {
+            None
+        };
+        let target = match summary_wake {
+            Some(wake) if wake < target => wake,
+            _ => target,
         };
         let wait = wait_duration(now, target);
         let (next, _) = sync
@@ -870,6 +996,7 @@ fn save_settings(
     config
         .set_high_intake(input.high_intake_mode, input.desk_goal_ml)
         .map_err(|err| err.to_string())?;
+    config.set_smart_flags(input.quick_drink_shortcut, input.day_summary_enabled);
     {
         let mut guard = state.lock();
         let previous_config = guard.config.clone();
@@ -897,12 +1024,54 @@ fn save_settings(
         let mut guard = state.lock();
         guard.config_warning = warning;
     }
+    if let Err(err) = sync_quick_drink_shortcut(&app, config.quick_drink_shortcut) {
+        let mut guard = state.lock();
+        let note = format!("快捷键没能更新：{err}");
+        guard.config_warning = Some(match guard.config_warning.take() {
+            Some(prev) => format!("{prev}；{note}"),
+            None => note,
+        });
+    }
     publish_config(&app, &state);
+    Ok(state.snapshot())
+}
+
+fn record_drink(app: &AppHandle, state: &AppState) -> Result<Snapshot, String> {
+    let (sound, volume) = {
+        let mut guard = state.lock();
+        let now = local_now();
+        let previous_daily = guard.daily.clone();
+        let previous_history = guard.history.clone();
+        let amount = guard.config.drink_amount;
+        let unit = guard.config.drink_unit;
+        let sound = guard.config.sound_enabled;
+        let volume = guard.config.volume;
+        let today = now.date_naive();
+        {
+            let Inner {
+                daily, history, ..
+            } = &mut *guard;
+            record_intake(daily, history, today, amount, unit);
+        }
+        guard.active = None;
+        if let Err(err) = persist(&guard) {
+            guard.daily = previous_daily;
+            guard.history = previous_history;
+            return Err(err);
+        }
+        (sound, volume)
+    };
+    hide_reminder(app);
+    if sound {
+        audio::play_drop(volume);
+    }
+    publish(app, state);
     Ok(state.snapshot())
 }
 
 #[tauri::command]
 fn drink(app: AppHandle, state: State<AppState>) -> Result<Snapshot, String> {
+    // 提醒卡里点「喝了」时已有确认动效，不再额外播一声。
     {
         let mut guard = state.lock();
         let now = local_now();
@@ -1073,9 +1242,11 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
             let (inner, first_launch) = load_inner();
             let from_autostart = std::env::args().any(|arg| arg == "--autostart");
+            let shortcut_enabled = inner.config.quick_drink_shortcut;
             let state = AppState {
                 inner: Arc::new(InnerSync {
                     mu: Mutex::new(inner),
@@ -1092,6 +1263,14 @@ pub fn run() {
             install_tray(app.handle(), &state)?;
             let shared = Arc::clone(&state.inner);
             app.manage(state);
+            if let Err(err) = sync_quick_drink_shortcut(app.handle(), shortcut_enabled) {
+                if let Some(app_state) = app.try_state::<AppState>() {
+                    app_state
+                        .lock()
+                        .config_warning
+                        .get_or_insert(format!("快捷键没能注册：{err}"));
+                }
+            }
             // 开始菜单等交互启动打开设置；开机自启（带 --autostart）只进托盘。
             if first_launch || !from_autostart {
                 show_settings(app.handle());
