@@ -1,6 +1,6 @@
 [package]
 name = "rundi"
-version = "0.1.7"
+version = "0.1.8"
 description = "工作日喝水提醒"
 authors = ["Rundi"]
 edition = "2021"

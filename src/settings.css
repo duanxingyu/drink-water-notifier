@@ -284,63 +284,131 @@ html.settings-view #root {
 }
 
 .history-modal-card {
-  width: min(100%, 380px);
-  max-height: min(78vh, 560px);
+  width: min(100%, 400px);
+  min-height: min(72vh, 540px);
+  max-height: min(86vh, 640px);
+  gap: 10px;
+  display: flex;
+  flex-direction: column;
+}
+
+.history-modal-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.history-modal-card h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  font-variation-settings: "SOFT" 40, "opsz" 28;
+}
+
+.history-modal-lede {
+  margin: 0;
+  font-size: 11.5px;
+  flex-shrink: 0;
+}
+
+.history-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .week-chart {
-  margin: 0 0 14px;
-  padding: 12px 10px 8px;
-  border-radius: 16px;
+  margin: 0;
+  padding: 10px 8px 8px;
+  border-radius: 14px;
   background: rgba(245, 252, 250, 0.42);
   border: 1px solid rgba(210, 240, 234, 0.65);
+  flex-shrink: 0;
 }
 
 .week-chart-bars {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
-  gap: 6px;
+  gap: 2px 4px;
   align-items: end;
-  height: 88px;
+  min-height: 92px;
 }
 
 .week-bar-col {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  height: 100%;
+  display: grid;
+  grid-template-rows: 14px 1fr 14px;
+  align-items: end;
+  justify-items: center;
+  gap: 3px;
+  height: 92px;
   min-width: 0;
 }
 
-.week-bar-track {
-  flex: 1;
+.week-bar-value {
+  font-size: 9.5px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: var(--accent-deep);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.week-bar-col.empty .week-bar-value {
+  color: rgba(20, 110, 104, 0.28);
+  font-weight: 500;
+}
+
+.week-bar-plot {
+  align-self: stretch;
+  justify-self: center;
   width: 100%;
-  max-width: 18px;
+  max-width: 16px;
+  height: 100%;
   display: flex;
   align-items: flex-end;
+  position: relative;
+}
+
+.week-bar-plot::after {
+  content: "";
+  position: absolute;
+  left: 10%;
+  right: 10%;
+  bottom: 0;
+  height: 1px;
+  background: rgba(20, 110, 104, 0.16);
   border-radius: 999px;
-  background: rgba(20, 110, 104, 0.08);
-  overflow: hidden;
 }
 
 .week-bar-fill {
   width: 100%;
   min-height: 0;
-  border-radius: 999px;
+  border-radius: 6px 6px 3px 3px;
   background: linear-gradient(180deg, #3db8ad 0%, #14786e 100%);
   transition: height 180ms ease;
 }
 
 .week-bar-col.today .week-bar-fill {
   background: linear-gradient(180deg, #5ed0c4 0%, #0f6b62 100%);
-  box-shadow: 0 0 0 1px rgba(20, 110, 104, 0.2);
+  box-shadow: 0 0 0 1px rgba(20, 110, 104, 0.18);
+}
+
+.week-bar-col.empty .week-bar-fill {
+  background: transparent;
 }
 
 .week-bar-label {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
   color: var(--muted-soft);
+  line-height: 1;
 }
 
 .week-bar-col.today .week-bar-label {
@@ -348,8 +416,9 @@ html.settings-view #root {
 }
 
 .week-chart-summary {
-  margin: 10px 2px 0;
+  margin: 8px 2px 0;
   text-align: center;
+  font-size: 12px;
 }
 
 .history-list {
@@ -357,11 +426,18 @@ html.settings-view #root {
   margin: 0;
   padding: 0 2px 0 0;
   display: grid;
-  gap: 8px;
-  max-height: 260px;
+  gap: 6px;
+  align-content: start;
+  flex: 1;
+  min-height: 0;
   overflow: auto;
   scrollbar-width: thin;
   scrollbar-color: rgba(16, 150, 140, 0.35) transparent;
+}
+
+.history-modal-card .update-modal-actions {
+  margin-top: auto;
+  flex-shrink: 0;
 }
 
 .history-list::-webkit-scrollbar {
@@ -374,43 +450,65 @@ html.settings-view #root {
 }
 
 .history-item {
-  border-radius: 16px;
-  padding: 10px 12px;
+  border-radius: 12px;
+  padding: 8px 10px;
   background: rgba(245, 252, 250, 0.42);
   border: 1px solid rgba(210, 240, 234, 0.65);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+}
+
+.history-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .history-date {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.history-date-name {
+  font-size: 13px;
   font-weight: 650;
   color: var(--ink);
+  line-height: 1.25;
 }
 
 .history-date-iso {
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 500;
   letter-spacing: 0.02em;
   color: var(--muted-soft);
   font-variant-numeric: tabular-nums;
 }
 
+.history-amounts {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  flex-shrink: 0;
+  text-align: right;
+}
+
 .history-label {
-  margin-top: 4px;
+  margin: 0;
   color: var(--accent-deep);
-  font-size: 15px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
 }
 
 .history-converted {
-  margin-top: 2px;
-  font-size: 12px;
+  margin: 0;
+  font-size: 11px;
   color: var(--muted);
+  line-height: 1.25;
 }
 
 .history-confirm {

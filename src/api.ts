@@ -483,19 +483,45 @@ export function previewReminder(): ReminderPayload {
   };
 }
 
+/** 本地日历日 YYYY-MM-DD（避免 toISOString 的 UTC 偏一天）。 */
+export function localDateIso(date = new Date()): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/** 柱顶短标签：600 →「600」，1050 →「1.1L」。 */
+export function formatShortMl(ml: number): string {
+  if (ml <= 0) return "";
+  if (ml >= 1000) {
+    const liters = ml / 1000;
+    const text = Number.isInteger(liters) ? String(liters) : liters.toFixed(1);
+    return `${text}L`;
+  }
+  return String(Math.round(ml));
+}
+
+/** 柱高百分比；有量时至少 12%，避免小量缩成圆点。 */
+export function weekBarHeightPct(ml: number, maxMl: number): number {
+  if (ml <= 0 || maxMl <= 0) return 0;
+  return Math.max(12, Math.round((ml / maxMl) * 100));
+}
+
 /** 近 7 天补齐（无记录为 0），用于历史周视图。 */
 export function buildWeekBars(
   days: DrinkHistoryDay[],
-  todayIso = new Date().toISOString().slice(0, 10),
+  todayIso = localDateIso(),
 ): Array<{ date: string; ml: number; isToday: boolean; weekday: string }> {
   const byDate = new Map(days.map((day) => [day.date, toMl(day.amount, day.unit)]));
   const labels = ["日", "一", "二", "三", "四", "五", "六"];
   const result: Array<{ date: string; ml: number; isToday: boolean; weekday: string }> = [];
-  const anchor = new Date(`${todayIso}T12:00:00`);
+  const [y, mo, da] = todayIso.split("-").map(Number);
+  const anchor = new Date(y!, (mo ?? 1) - 1, da ?? 1, 12, 0, 0, 0);
   for (let i = 6; i >= 0; i -= 1) {
     const d = new Date(anchor);
     d.setDate(anchor.getDate() - i);
-    const iso = d.toISOString().slice(0, 10);
+    const iso = localDateIso(d);
     result.push({
       date: iso,
       ml: byDate.get(iso) ?? 0,
@@ -511,6 +537,7 @@ export function summarizeWeek(bars: Array<{ ml: number }>): { daysLogged: number
   const total = bars.reduce((sum, bar) => sum + bar.ml, 0);
   return {
     daysLogged: logged.length,
-    avgMl: logged.length === 0 ? 0 : Math.round(total / 7),
+    // 按有记录的天数平均，比硬除 7 更贴近「喝了多少」的直觉。
+    avgMl: logged.length === 0 ? 0 : Math.round(total / logged.length),
   };
 }

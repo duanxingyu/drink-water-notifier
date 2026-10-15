@@ -15,6 +15,7 @@ import {
   formatIntake,
   formatIntakeApprox,
   buildWeekBars,
+  formatShortMl,
   getDrinkHistory,
   getSnapshot,
   installUpdate,
@@ -29,6 +30,7 @@ import {
   resume,
   saveSettings,
   summarizeWeek,
+  weekBarHeightPct,
   type DrinkHistoryDay,
   type DrinkUnit,
   type SettingsInput,
@@ -933,32 +935,50 @@ export function Settings() {
             }}
           />
           <div className="update-modal-card history-modal-card glass-panel">
-            <p className="update-modal-kicker">喝水记录</p>
-            <h2 id="history-dialog-title">历史记录</h2>
-            <p className="update-modal-lede">按天查看过去的饮水量。跨天后会自动归档。</p>
+            <header className="history-modal-head">
+              <h2 id="history-dialog-title">历史记录</h2>
+              <p className="hint history-modal-lede">近 7 天趋势 · 按日归档</p>
+            </header>
             {historyLoading ? (
               <p className="hint">正在读取…</p>
             ) : (
-              <>
+              <div className="history-modal-body">
                 <div className="week-chart" aria-label="近七天饮水量">
-                  <div className="week-chart-bars">
-                    {weekBars.map((bar) => (
-                      <div
-                        key={bar.date}
-                        className={bar.isToday ? "week-bar-col today" : "week-bar-col"}
-                      >
-                        <div className="week-bar-track">
-                          <div
-                            className="week-bar-fill"
-                            style={{ height: `${Math.round((bar.ml / weekMaxMl) * 100)}%` }}
-                          />
+                  <div className="week-chart-bars" role="img" aria-label="近七天柱状图">
+                    {weekBars.map((bar) => {
+                      const pct = weekBarHeightPct(bar.ml, weekMaxMl);
+                      const tip =
+                        bar.ml > 0
+                          ? `${bar.date} · ${bar.ml} 毫升`
+                          : `${bar.date} · 无记录`;
+                      return (
+                        <div
+                          key={bar.date}
+                          className={
+                            bar.isToday
+                              ? "week-bar-col today"
+                              : bar.ml > 0
+                                ? "week-bar-col"
+                                : "week-bar-col empty"
+                          }
+                          title={tip}
+                        >
+                          <span className="week-bar-value">
+                            {bar.ml > 0 ? formatShortMl(bar.ml) : "·"}
+                          </span>
+                          <div className="week-bar-plot">
+                            <div
+                              className="week-bar-fill"
+                              style={{ height: `${pct}%` }}
+                            />
+                          </div>
+                          <span className="week-bar-label">{bar.weekday}</span>
                         </div>
-                        <span className="week-bar-label">{bar.weekday}</span>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                   <p className="hint week-chart-summary">
-                    近 7 天已记 {weekStats.daysLogged} 天 · 日均约 {weekStats.avgMl} 毫升
+                    已记 {weekStats.daysLogged} 天 · 有记日均约 {weekStats.avgMl} 毫升
                   </p>
                 </div>
                 {historyDays.length === 0 ? (
@@ -967,21 +987,25 @@ export function Settings() {
                   <ul className="history-list">
                     {historyDays.map((day) => (
                       <li key={day.date} className="history-item">
-                        <div>
+                        <div className="history-row">
                           <div className="history-date">
-                            {formatHistoryDate(day.date, day.isToday)}
+                            <span className="history-date-name">
+                              {formatHistoryDate(day.date, day.isToday)}
+                            </span>
                             <span className="history-date-iso">{day.date}</span>
                           </div>
-                          <div className="history-label">{day.label}</div>
-                          {day.convertedLabel ? (
-                            <div className="history-converted">{day.convertedLabel}</div>
-                          ) : null}
+                          <div className="history-amounts">
+                            <span className="history-label">{day.label}</span>
+                            {day.convertedLabel ? (
+                              <span className="history-converted">{day.convertedLabel}</span>
+                            ) : null}
+                          </div>
                         </div>
                       </li>
                     ))}
                   </ul>
                 )}
-              </>
+              </div>
             )}
             {historyConfirmClear ? (
               <p className="hint history-confirm">
