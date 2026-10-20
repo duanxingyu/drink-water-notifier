@@ -14,7 +14,8 @@ type PosState = {
 };
 
 const STORAGE_KEY = "rundi.reminder.pos";
-const MARGIN_PX = 16;
+/** 贴右下角时与工作区边缘的间距（逻辑像素）。 */
+const MARGIN_PX = 8;
 
 function loadPos(): PosState | null {
   try {

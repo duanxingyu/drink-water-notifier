@@ -604,7 +604,7 @@ fn place_reminder_bottom_right(window: &WebviewWindow) {
     };
     let scale = monitor.scale_factor();
     let work = monitor.work_area();
-    let margin = (16.0 * scale).round() as i32;
+    let margin = (8.0 * scale).round() as i32;
     let x = work.position.x + work.size.width as i32 - size.width as i32 - margin;
     let y = work.position.y + work.size.height as i32 - size.height as i32 - margin;
     let _ = window.set_position(tauri::PhysicalPosition::new(x.max(work.position.x), y.max(work.position.y)));

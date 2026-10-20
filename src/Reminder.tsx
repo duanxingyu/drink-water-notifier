@@ -15,7 +15,7 @@ import {
 } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Glass } from "@/Glass";
-import { placeBottomRight, rememberPosition, restorePosition } from "@/windowDock";
+import { placeBottomRight, rememberPosition } from "@/windowDock";
 
 type Phase = "ask" | "drank" | "later" | "gone";
 
@@ -26,20 +26,27 @@ export function Reminder() {
   const [left, setLeft] = useState(0);
   const [phase, setPhase] = useState<Phase>("ask");
   const [exiting, setExiting] = useState(false);
+  const [hoverPaused, setHoverPaused] = useState(false);
   const seen = useRef(0);
   const exitingRef = useRef(false);
+  const hoverPausedRef = useRef(false);
+  const remainMsRef = useRef(0);
 
   function arm(next: ReminderPayload) {
     if (next.token <= seen.current) return;
     seen.current = next.token;
     exitingRef.current = false;
+    hoverPausedRef.current = false;
+    setHoverPaused(false);
     setExiting(false);
     setPayload(next);
+    remainMsRef.current = next.autoDismissSeconds * 1000;
     setLeft(next.autoDismissSeconds);
     // 托盘/快捷键记水：直接显示确认 toast，不进「该喝水啦」流程。
     setPhase(next.kind === "ack" ? "drank" : "ask");
     if (isTauri()) {
-      void restorePosition().catch(() => void placeBottomRight());
+      // 尺寸变更后必须重新贴右下角；restore 会沿用旧高度坐标，显得「太靠上」。
+      void placeBottomRight().catch(() => {});
     }
   }
 
@@ -68,12 +75,13 @@ export function Reminder() {
     const tickingAsk = phase === "ask";
     const tickingAck = phase === "drank" && payload.kind === "ack";
     if (!tickingAsk && !tickingAck) return;
-    const started = Date.now();
-    const total = payload.autoDismissSeconds * 1000;
+    remainMsRef.current = payload.autoDismissSeconds * 1000;
+    setLeft(payload.autoDismissSeconds);
     const timer = window.setInterval(() => {
-      const remain = Math.max(0, total - (Date.now() - started));
-      setLeft(Math.ceil(remain / 1000));
-      if (remain <= 0) {
+      if (hoverPausedRef.current) return;
+      remainMsRef.current = Math.max(0, remainMsRef.current - 200);
+      setLeft(Math.ceil(remainMsRef.current / 1000));
+      if (remainMsRef.current <= 0) {
         window.clearInterval(timer);
         void exitThen(() => {
           setPhase("gone");
@@ -83,6 +91,16 @@ export function Reminder() {
     }, 200);
     return () => window.clearInterval(timer);
   }, [payload, phase, exiting]);
+
+  function onCardEnter() {
+    hoverPausedRef.current = true;
+    setHoverPaused(true);
+  }
+
+  function onCardLeave() {
+    hoverPausedRef.current = false;
+    setHoverPaused(false);
+  }
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -187,11 +205,15 @@ export function Reminder() {
         className={cardClass}
         role="dialog"
         aria-label={dialogLabel}
+        onMouseEnter={onCardEnter}
+        onMouseLeave={onCardLeave}
         onMouseDown={(event) => void onDragDown(event)}
       >
         <div className="brand card-item">
           <span>润滴</span>
-          <span className="drag-hint">拖动 · {left}s</span>
+          <span className="drag-hint">
+            {hoverPaused ? "悬停中 · 暂停关闭" : `拖动 · ${left}s`}
+          </span>
         </div>
         {phase === "ask" ? (
           isSummary ? (
