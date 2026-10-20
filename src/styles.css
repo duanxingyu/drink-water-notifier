@@ -111,6 +111,9 @@ html.preview body {
 .card-in .card-item:nth-child(6) {
   animation-delay: 0.34s;
 }
+.card-in .card-item:nth-child(7) {
+  animation-delay: 0.38s;
+}
 
 @keyframes card-in {
   0% {
@@ -325,6 +328,199 @@ html.preview body {
   font-size: 22px;
   padding: 28px 0 8px;
   color: #146e68;
+}
+
+.card-summary {
+  padding: 14px 16px 14px;
+  gap: 0;
+}
+
+.card-ack {
+  padding: 14px 16px 14px;
+}
+
+.card-ack .summary-head {
+  margin-top: 8px;
+}
+
+.card-ack .summary-hero {
+  margin-top: 10px;
+}
+
+.card-ack .summary-amount {
+  font-size: 30px;
+}
+
+.ack-hint {
+  margin: 12px 0 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #4f4841;
+}
+
+.drink-note {
+  margin: 6px 0 0;
+  padding: 0 2px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #4f4841;
+  text-align: left;
+}
+
+.drink-stats {
+  margin-top: 4px;
+  display: grid;
+  gap: 8px;
+}
+
+.drink-stats .summary-stat {
+  margin-top: 0;
+}
+
+.drink-approx {
+  margin: 0;
+  padding: 0 2px;
+  font-size: 11.5px;
+  color: #6d645b;
+  text-align: right;
+}
+
+.card:not(.card-summary):not(.card-ack) .summary-head {
+  margin-top: 6px;
+}
+
+.card:not(.card-summary):not(.card-ack) .summary-kicker {
+  font-size: 22px;
+}
+
+.summary-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.summary-kicker {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 20px;
+  font-weight: 560;
+  letter-spacing: 0.02em;
+  color: #163633;
+}
+
+.summary-date {
+  margin: 0;
+  font-size: 11px;
+  color: #8a8178;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+}
+
+.summary-hero {
+  margin-top: 14px;
+  padding: 12px 12px 11px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+.summary-caption {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: #7a7168;
+}
+
+.summary-amount {
+  margin: 6px 0 0;
+  font-family: var(--font-serif);
+  font-size: 34px;
+  font-weight: 560;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+  color: #146e68;
+  font-variant-numeric: tabular-nums;
+}
+
+.summary-approx {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: #6d645b;
+}
+
+.summary-goal {
+  margin-top: 12px;
+  display: grid;
+  gap: 6px;
+}
+
+.summary-goal-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11.5px;
+  font-weight: 550;
+  color: #4a6f69;
+}
+
+.summary-goal-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(20, 110, 104, 0.12);
+  border: 1px solid rgba(20, 110, 104, 0.16);
+  overflow: hidden;
+}
+
+.summary-goal-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #2bb3a3, #168f82);
+}
+
+.summary-goal-note {
+  margin: 0;
+  font-size: 11.5px;
+  color: #6d645b;
+}
+
+.summary-stat {
+  margin-top: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+}
+
+.summary-stat-label {
+  font-size: 11.5px;
+  color: #7a7168;
+}
+
+.summary-stat-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: #146e68;
+  font-variant-numeric: tabular-nums;
+}
+
+.summary-note {
+  margin: 14px 0 0;
+  padding: 0 2px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #4f4841;
+  text-align: left;
+}
+
+.card-summary .actions {
+  margin-top: 14px;
 }
 
 @media (prefers-reduced-motion: reduce) {

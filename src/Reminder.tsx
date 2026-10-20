@@ -2,8 +2,11 @@ import { useEffect, useRef, useState } from "react";
 
 import {
   activeReminder,
+  counterpartUnit,
   dismiss,
   drink,
+  formatIntake,
+  formatIntakeApprox,
   isTauri,
   onReminder,
   previewReminder,
@@ -149,10 +152,33 @@ export function Reminder() {
   }
 
   const minutes = payload.snoozeMinutes;
-  const cardClass = exiting ? "card card-out" : "card card-in";
   const isSummary = payload.kind === "summary";
   const isAck = payload.kind === "ack";
+  const cardClass = [
+    exiting ? "card card-out" : "card card-in",
+    isSummary ? "card-summary" : "",
+    isAck ? "card-ack" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
   const dialogLabel = isSummary ? "今日小结" : isAck ? "已记下" : "该喝水啦";
+  const goalProgress =
+    payload.deskGoalMl > 0
+      ? Math.min(1, payload.intakeMlToday / payload.deskGoalMl)
+      : 0;
+  const goalPct = Math.round(goalProgress * 100);
+  const goalReached = payload.deskGoalMl > 0 && payload.intakeMlToday >= payload.deskGoalMl;
+  const goalRemaining = Math.max(0, payload.deskGoalMl - payload.intakeMlToday);
+  const intakeApprox = formatIntakeApprox(
+    payload.glassesToday,
+    payload.drinkUnit,
+    counterpartUnit(payload.drinkUnit),
+  );
+  const todayLine = new Date().toLocaleDateString("zh-CN", {
+    month: "long",
+    day: "numeric",
+    weekday: "short",
+  });
 
   return (
     <div className="stage">
@@ -170,12 +196,52 @@ export function Reminder() {
         {phase === "ask" ? (
           isSummary ? (
             <>
-              <h1 className="headline card-item">今日小结</h1>
-              <p className="sub card-item">{payload.drinkPrompt}</p>
-              <p className="meta card-item">今日已喝 {payload.intakeLabel}</p>
-              {payload.goalLabel ? (
-                <p className="meta goal-meta card-item">{payload.goalLabel}</p>
-              ) : null}
+              <div className="summary-head card-item">
+                <p className="summary-kicker">今日小结</p>
+                <p className="summary-date">{todayLine}</p>
+              </div>
+              <div className="summary-hero card-item">
+                <p className="summary-caption">工位已喝</p>
+                <p className="summary-amount">{payload.intakeLabel}</p>
+                {intakeApprox ? (
+                  <p className="summary-approx">{intakeApprox}</p>
+                ) : payload.intakeMlToday > 0 && payload.drinkUnit !== "ml" ? (
+                  <p className="summary-approx">约 {payload.intakeMlToday} 毫升</p>
+                ) : null}
+              </div>
+              {payload.highIntakeMode && payload.deskGoalMl > 0 ? (
+                <div className="summary-goal card-item" aria-label="工位目标进度">
+                  <div className="summary-goal-row">
+                    <span>工位目标</span>
+                    <span>
+                      {payload.intakeMlToday}/{payload.deskGoalMl} 毫升
+                    </span>
+                  </div>
+                  <div
+                    className="summary-goal-bar"
+                    role="progressbar"
+                    aria-valuenow={goalPct}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                  >
+                    <div
+                      className="summary-goal-fill"
+                      style={{ width: `${goalPct}%` }}
+                    />
+                  </div>
+                  <p className="summary-goal-note">
+                    {goalReached
+                      ? "今日工位目标已达成"
+                      : `还差 ${goalRemaining} 毫升`}
+                  </p>
+                </div>
+              ) : (
+                <div className="summary-stat card-item">
+                  <span className="summary-stat-label">今日毫升</span>
+                  <span className="summary-stat-value">{payload.intakeMlToday} ml</span>
+                </div>
+              )}
+              <p className="summary-note card-item">{payload.drinkPrompt}</p>
               <div className="actions card-item">
                 <Button variant="drink" size="default" onClick={() => void confirmSummary()}>
                   知道了
@@ -184,15 +250,43 @@ export function Reminder() {
             </>
           ) : (
             <>
-              <h1 className="headline card-item">该喝水啦</h1>
-              <p className="sub card-item">{payload.drinkPrompt}</p>
+              <div className="summary-head card-item">
+                <h1 className="summary-kicker">该喝水啦</h1>
+              </div>
+              <p className="drink-note card-item">{payload.drinkPrompt}</p>
               <div className="glass-wrap card-item">
                 <Glass dismissSeconds={payload.autoDismissSeconds} />
               </div>
-              <p className="meta card-item">今日已喝 {payload.intakeLabel}</p>
-              {payload.goalLabel ? (
-                <p className="meta goal-meta card-item">{payload.goalLabel}</p>
-              ) : null}
+              <div className="drink-stats card-item">
+                <div className="summary-stat">
+                  <span className="summary-stat-label">今日已喝</span>
+                  <span className="summary-stat-value">{payload.intakeLabel}</span>
+                </div>
+                {payload.highIntakeMode && payload.deskGoalMl > 0 ? (
+                  <div className="summary-goal" aria-label="工位目标进度">
+                    <div className="summary-goal-row">
+                      <span>工位目标</span>
+                      <span>
+                        {payload.intakeMlToday}/{payload.deskGoalMl} 毫升
+                      </span>
+                    </div>
+                    <div
+                      className="summary-goal-bar"
+                      role="progressbar"
+                      aria-valuenow={goalPct}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                    >
+                      <div
+                        className="summary-goal-fill"
+                        style={{ width: `${goalPct}%` }}
+                      />
+                    </div>
+                  </div>
+                ) : intakeApprox ? (
+                  <p className="drink-approx">{intakeApprox}</p>
+                ) : null}
+              </div>
               <div className="actions card-item">
                 <Button variant="drink" size="default" onClick={() => void confirmDrink()}>
                   喝了
@@ -203,6 +297,48 @@ export function Reminder() {
               </div>
             </>
           )
+        ) : isAck ? (
+          <>
+            <div className="summary-head card-item">
+              <p className="summary-kicker">已记下</p>
+              <p className="summary-date">
+                +{formatIntake(payload.drinkAmount, payload.drinkUnit)}
+              </p>
+            </div>
+            <div className="summary-hero card-item">
+              <p className="summary-caption">今日合计</p>
+              <p className="summary-amount">{payload.intakeLabel}</p>
+              {intakeApprox ? (
+                <p className="summary-approx">{intakeApprox}</p>
+              ) : payload.intakeMlToday > 0 ? (
+                <p className="summary-approx">{payload.intakeMlToday} 毫升</p>
+              ) : null}
+            </div>
+            {payload.highIntakeMode && payload.deskGoalMl > 0 ? (
+              <div className="summary-goal card-item" aria-label="工位目标进度">
+                <div className="summary-goal-row">
+                  <span>工位目标</span>
+                  <span>
+                    {goalReached ? "已达成" : `还差 ${goalRemaining} 毫升`}
+                  </span>
+                </div>
+                <div
+                  className="summary-goal-bar"
+                  role="progressbar"
+                  aria-valuenow={goalPct}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                >
+                  <div
+                    className="summary-goal-fill"
+                    style={{ width: `${goalPct}%` }}
+                  />
+                </div>
+              </div>
+            ) : (
+              <p className="ack-hint card-item">{payload.drinkAck}</p>
+            )}
+          </>
         ) : (
           <p className="toast card-item">
             {phase === "drank" ? payload.drinkAck : `${minutes} 分钟后再叫你`}

@@ -283,14 +283,7 @@ html.settings-view #root {
   transition: width 0.35s ease;
 }
 
-.history-modal-card {
-  width: min(100%, 400px);
-  min-height: min(72vh, 540px);
-  max-height: min(86vh, 640px);
-  gap: 10px;
-  display: flex;
-  flex-direction: column;
-}
+/* 历史弹窗布局见下方 .update-modal-card.history-modal-card（须压过 update-modal-card 的 grid）。 */
 
 .history-modal-head {
   display: flex;
@@ -298,14 +291,6 @@ html.settings-view #root {
   justify-content: space-between;
   gap: 10px;
   flex-shrink: 0;
-}
-
-.history-modal-card h2 {
-  margin: 0;
-  font-size: 17px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  font-variation-settings: "SOFT" 40, "opsz" 28;
 }
 
 .history-modal-lede {
@@ -318,7 +303,7 @@ html.settings-view #root {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
 }
@@ -424,20 +409,17 @@ html.settings-view #root {
 .history-list {
   list-style: none;
   margin: 0;
-  padding: 0 2px 0 0;
+  padding: 0 4px 0 0;
   display: grid;
   gap: 6px;
   align-content: start;
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-color: rgba(16, 150, 140, 0.35) transparent;
-}
-
-.history-modal-card .update-modal-actions {
-  margin-top: auto;
-  flex-shrink: 0;
 }
 
 .history-list::-webkit-scrollbar {
@@ -818,6 +800,35 @@ button.linkish:disabled {
   display: grid;
   gap: 10px;
   animation: update-modal-in 0.28s cubic-bezier(0.16, 1.05, 0.28, 1) both;
+}
+
+/* 必须压过上方 .update-modal-card 的 display:grid，否则列表撑开、按钮被挤出。 */
+.update-modal-card.history-modal-card {
+  width: min(100%, 400px);
+  min-height: min(72vh, 540px);
+  max-height: min(86vh, 640px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.update-modal-card.history-modal-card h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  font-variation-settings: "SOFT" 40, "opsz" 28;
+}
+
+.update-modal-card.history-modal-card .update-modal-actions {
+  margin-top: auto;
+  flex-shrink: 0;
+}
+
+.update-modal-card.history-modal-card .history-confirm {
+  flex-shrink: 0;
 }
 
 .update-modal-kicker {

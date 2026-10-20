@@ -111,24 +111,30 @@ pub fn summary_due(
     true
 }
 
-/// 下班小结正文。
+/// 下班小结鼓励语（摄入数字由界面单独展示，这里不重复报量）。
 pub fn format_day_summary(
-    intake_label: &str,
+    _intake_label: &str,
     intake_ml_today: u32,
     desk_goal_ml: u32,
     high_intake_mode: bool,
 ) -> String {
+    if intake_ml_today == 0 {
+        return "工作时段结束了。今天还没记下喝水，明天到点再轻轻叫你。".into();
+    }
     if high_intake_mode && desk_goal_ml > 0 {
         let progress = (goal_progress(intake_ml_today, desk_goal_ml) * 100.0).round() as u32;
         if intake_ml_today >= desk_goal_ml {
-            return format!("今日工位喝了 {intake_label}，目标已达成，不错。");
+            return "工位目标已达成，很稳。下班后也可以继续润一润。".into();
         }
-        return format!("今日工位喝了 {intake_label}，完成约 {progress}%。下班后记得再补一点。");
+        if progress >= 70 {
+            return format!("工位进度约 {progress}%，就差一口气。通勤或晚饭时再补一点。");
+        }
+        return format!("工位进度约 {progress}%。下班后记得把缺口补一补。");
     }
-    if intake_ml_today == 0 {
-        return "今天还没有记过喝水。明天到点再轻轻提醒你。".into();
+    if intake_ml_today >= 1000 {
+        return "今天喝得不错。工作辛苦了，路上也别忘了润一润。".into();
     }
-    format!("今日已喝 {intake_label}。工作辛苦了，记得继续润一润。")
+    "工作时段告一段落。今晚再记几口，身体会更舒服。".into()
 }
 
 /// 便捷：从调度与今日摄入拼出 PromptContext 常用字段。
@@ -300,11 +306,13 @@ mod tests {
     #[test]
     fn summary_copy_with_goal() {
         let text = format_day_summary("900 毫升", 900, 1500, true);
-        assert!(text.contains("900 毫升"));
         assert!(text.contains("%"));
+        assert!(!text.contains("900 毫升"));
         let done = format_day_summary("1500 毫升", 1500, 1500, true);
         assert!(done.contains("目标已达成"));
         let plain = format_day_summary("2 杯", 700, 1500, false);
-        assert!(plain.contains("今日已喝 2 杯"));
+        assert!(plain.contains("告一段落") || plain.contains("今晚"));
+        let empty = format_day_summary("0 杯", 0, 1500, false);
+        assert!(empty.contains("还没记下"));
     }
 }

@@ -264,7 +264,9 @@ fn build_reminder_payload(guard: &Inner, kind: &str, token: u64) -> ReminderPayl
         kind: kind.to_string(),
         token,
         auto_dismiss_seconds: if kind == "summary" {
-            guard.config.auto_dismiss_seconds.max(12)
+            guard.config.auto_dismiss_seconds.max(18)
+        } else if kind == "ack" {
+            2
         } else {
             guard.config.auto_dismiss_seconds
         },
@@ -573,6 +575,16 @@ fn present_reminder(app: &AppHandle, payload: &ReminderPayload) {
             return;
         }
     };
+    // 小结卡内容更多，略加高；普通提醒 / 确认条恢复默认尺寸。
+    let (w, h) = if payload.kind == "summary" {
+        (300.0, 468.0)
+    } else if payload.kind == "ack" {
+        (300.0, 300.0)
+    } else {
+        (300.0, 420.0)
+    };
+    let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(w, h)));
+    place_reminder_bottom_right(&window);
     let _ = window.emit("reminder", payload);
     let _ = window.unminimize();
     let _ = window.show();
@@ -1055,9 +1067,7 @@ fn record_drink(app: &AppHandle, state: &AppState) -> Result<Snapshot, String> {
         }
         guard.token = guard.token.saturating_add(1);
         let mut payload = build_reminder_payload(&guard, "ack", guard.token);
-        payload.auto_dismiss_seconds = 2;
-        // 确认句带上今日总量，比单独「记下这一杯」更有反馈。
-        payload.drink_ack = format!("{} · 今日 {}", payload.drink_ack, payload.intake_label);
+        payload.auto_dismiss_seconds = 3;
         guard.active = Some(payload.clone());
         if let Err(err) = persist(&guard) {
             guard.daily = previous_daily;
